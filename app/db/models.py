@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import (
-    Integer, String, Text, Date, DateTime,
+    Integer, String, Text, Date, DateTime, Float,
     ForeignKey, func, CheckConstraint, Index,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -90,6 +90,11 @@ class ReportDraft(Base):
     actioned_by: Mapped[Optional[str]] = mapped_column(String(200))   # who approved or rejected
     actioned_at: Mapped[Optional[datetime]] = mapped_column(DateTime)  # when they did it
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text)      # only set on rejection
+
+    # Quality scoring — populated by stage_safety via the enhanced prompt.
+    # nullable=True so existing draft rows are unaffected by this schema change.
+    quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    quality_breakdown: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON string
 
     study: Mapped["Study"] = relationship(back_populates="report_drafts")
 

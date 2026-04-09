@@ -40,6 +40,9 @@ class PipelineContext:
     safety_result: dict = field(default_factory=dict)
     draft_id: Optional[int] = None
     events: list[dict] = field(default_factory=list)
+    # Quality scoring — populated by stage_safety, persisted by stage_save
+    quality_score: Optional[float] = None
+    quality_breakdown: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -150,12 +153,24 @@ def stage_draft(ctx: PipelineContext, llm: LLMClient) -> PipelineContext:
 def stage_safety(ctx: PipelineContext, llm: LLMClient) -> PipelineContext:
     """
     Stage 5 — SAFETY
-    Ask the LLM (acting as a safety reviewer) to check the draft.
-    Raises if the draft is not approved.
+    Two-layer quality check:
+      Layer 1 — run_rule_checks(): fast regex checks, zero LLM cost
+      Layer 2 — LLM safety + quality scoring using enhanced prompt_safety()
+
+    The rule check results are passed to the LLM as structured context so
+    Claude focuses on clinical reasoning instead of re-finding mechanical issues.
+    The LLM response now includes quality_score and dimensions in addition to
+    the existing approved/issues/confidence fields.
     """
+    from app.services.quality import run_rule_checks
+
     t0 = time.monotonic()
 
-    raw = llm.complete(prompt_safety(ctx.draft_text, ctx.structured_fields))
+    # Layer 1: fast deterministic checks (microseconds, no API call)
+    rule_results = run_rule_checks(ctx.draft_text, ctx.structured_fields)
+
+    # Layer 2: LLM safety review, with rule results as pre-populated context
+    raw = llm.complete(prompt_safety(ctx.draft_text, ctx.structured_fields, rule_results))
 
     try:
         ctx.safety_result = json.loads(raw)
@@ -163,8 +178,16 @@ def stage_safety(ctx: PipelineContext, llm: LLMClient) -> PipelineContext:
         ctx.safety_result = {"approved": False, "issues": ["Could not parse safety response."], "confidence": 0.0}
 
     approved = ctx.safety_result.get("approved", False)
-    ctx.events.append(_event("SAFETY", "llm_safety", f"approved={approved}", t0))
-    log.info("pipeline.safety", study_id=ctx.study_id, approved=approved, result=ctx.safety_result)
+
+    # Extract quality fields — use .get() so the stage never raises if
+    # the LLM omits them (graceful degradation: score stays None)
+    ctx.quality_score = ctx.safety_result.get("quality_score")
+    ctx.quality_breakdown = ctx.safety_result.get("dimensions")
+
+    ctx.events.append(
+        _event("SAFETY", "llm_safety", f"approved={approved},quality={ctx.quality_score}", t0)
+    )
+    log.info("pipeline.safety", study_id=ctx.study_id, approved=approved, quality=ctx.quality_score)
 
     if not approved:
         issues = ctx.safety_result.get("issues", [])
@@ -187,6 +210,8 @@ def stage_save(ctx: PipelineContext, db: Session) -> PipelineContext:
         structured_json=json.dumps(ctx.structured_fields),
         model_name=ctx.model_name,
         version="1.0",
+        quality_score=ctx.quality_score,
+        quality_breakdown=json.dumps(ctx.quality_breakdown) if ctx.quality_breakdown else None,
     )
     db.add(draft)
     db.flush()  # get draft.draft_id without committing yet

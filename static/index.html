@@ -578,6 +578,73 @@
                 </div>
               </template>
 
+              <!-- Quality Score Card
+                   Only shown when the pipeline produced quality data.
+                   Layout: overall score badge on the left, four dimension
+                   progress bars on the right. Each bar is colored by score:
+                     green  ≥ 0.80  — good
+                     yellow 0.60–0.79 — needs attention
+                     red    < 0.60   — significant issues
+              -->
+              <template x-if="draft.quality_score !== null && draft.quality_score !== undefined">
+                <div class="bg-white border border-slate-200 rounded-xl p-5">
+
+                  <div class="flex items-start gap-5 flex-wrap">
+
+                    <!-- Overall score circle -->
+                    <div class="flex-shrink-0 text-center">
+                      <div class="relative w-16 h-16 mx-auto">
+                        <!-- SVG circle progress ring -->
+                        <svg class="w-16 h-16 -rotate-90" viewBox="0 0 64 64">
+                          <!-- Track ring -->
+                          <circle cx="32" cy="32" r="26" fill="none" stroke="#e2e8f0" stroke-width="6"/>
+                          <!-- Filled ring — stroke-dasharray controls how much of the circle is filled.
+                               Circumference of radius-26 circle = 2π×26 ≈ 163.4
+                               Fill amount = score × 163.4 -->
+                          <circle cx="32" cy="32" r="26" fill="none"
+                            :stroke="qualityColor(draft.quality_score)"
+                            stroke-width="6"
+                            stroke-linecap="round"
+                            :stroke-dasharray="`${(draft.quality_score * 163.4).toFixed(1)} 163.4`"/>
+                        </svg>
+                        <!-- Score number in the centre -->
+                        <div class="absolute inset-0 flex items-center justify-center">
+                          <span class="text-sm font-bold text-slate-800"
+                            x-text="Math.round(draft.quality_score * 100) + '%'"></span>
+                        </div>
+                      </div>
+                      <div class="text-xs text-slate-500 mt-1 font-medium">Quality</div>
+                    </div>
+
+                    <!-- Dimension breakdown bars -->
+                    <div class="flex-1 min-w-0 space-y-2.5" x-show="draft.quality_breakdown">
+                      <template x-for="[dim, score] in qualityDimensions(draft.quality_breakdown)" :key="dim">
+                        <div>
+                          <div class="flex items-center justify-between mb-1">
+                            <span class="text-xs font-medium text-slate-600 capitalize"
+                              x-text="dim.replace('_', ' ')"></span>
+                            <span class="text-xs font-semibold"
+                              :class="score >= 0.8 ? 'text-green-700' : score >= 0.6 ? 'text-yellow-700' : 'text-red-700'"
+                              x-text="Math.round(score * 100) + '%'"></span>
+                          </div>
+                          <!-- Progress bar track -->
+                          <div class="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                            <!-- Progress bar fill — width is set as inline style because
+                                 Tailwind purges dynamic class names at build time.
+                                 Using inline style for computed widths is the correct pattern. -->
+                            <div class="h-full rounded-full transition-all duration-500"
+                              :style="`width: ${Math.round(score * 100)}%`"
+                              :class="score >= 0.8 ? 'bg-green-500' : score >= 0.6 ? 'bg-yellow-400' : 'bg-red-500'">
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+
+                  </div>
+                </div>
+              </template>
+
               <!-- Report text — formatted with bold section headers -->
               <div class="bg-white border border-slate-200 rounded-xl p-6">
                 <div class="report-body text-sm leading-relaxed"
@@ -1311,6 +1378,25 @@
         // -----------------------------------------------------------------------
         // DISPLAY HELPERS
         // -----------------------------------------------------------------------
+
+        // Returns a hex color for the quality score ring based on the score value.
+        // Thresholds mirror clinical convention: green = good, amber = watch, red = act.
+        qualityColor(score) {
+          if (score >= 0.8) return '#22c55e';   // green-500
+          if (score >= 0.6) return '#eab308';   // yellow-500
+          return '#ef4444';                      // red-500
+        },
+
+        // Converts the quality_breakdown dict into a sorted [name, score] pair array
+        // so x-for can iterate over it.
+        // JavaScript objects don't have a guaranteed order when you iterate them with
+        // for...in — Object.entries() gives a stable array we can control.
+        // We sort by score ascending so the weakest dimension appears at the top —
+        // the most actionable item is the first thing the radiologist sees.
+        qualityDimensions(breakdown) {
+          if (!breakdown) return [];
+          return Object.entries(breakdown).sort((a, b) => a[1] - b[1]);
+        },
 
         // FIX 5: Just a lookup now — no object creation per call
         modalityBadge(modality) {

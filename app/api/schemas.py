@@ -111,19 +111,24 @@ class ReportDraftRead(BaseModel):
     actioned_by: Optional[str] = None
     actioned_at: Optional[datetime] = None
     rejection_reason: Optional[str] = None
+    # Quality scoring fields — None if the pipeline ran before this feature was added
+    quality_score: Optional[float] = None
+    quality_breakdown: Optional[Any] = None  # parsed from JSON string, like structured_json
 
     model_config = {"from_attributes": True}
 
     @classmethod
     def from_orm_with_parsed_json(cls, draft) -> "ReportDraftRead":
         """
-        ORM → schema, converting the stored JSON string to a real dict.
-        SQLAlchemy stores structured_json as plain Text so the column
-        stays compatible with MS SQL. We parse it here so the API
-        response contains an object, not a raw string.
+        ORM → schema, converting the stored JSON strings to real dicts.
+        SQLAlchemy stores structured_json and quality_breakdown as plain Text
+        so the column stays compatible with MS SQL. We parse both here so the
+        API response contains objects, not raw strings.
         """
         raw = draft.structured_json
         parsed = json.loads(raw) if raw else None
+        raw_qb = draft.quality_breakdown
+        parsed_qb = json.loads(raw_qb) if raw_qb else None
         return cls(
             draft_id=draft.draft_id,
             study_id=draft.study_id,
@@ -135,6 +140,8 @@ class ReportDraftRead(BaseModel):
             actioned_by=draft.actioned_by,
             actioned_at=draft.actioned_at,
             rejection_reason=draft.rejection_reason,
+            quality_score=draft.quality_score,
+            quality_breakdown=parsed_qb,
         )
 
 

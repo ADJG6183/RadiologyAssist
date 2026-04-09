@@ -66,6 +66,13 @@ class MockLLMClient(LLMClient):
                 "approved": True,
                 "issues": [],
                 "confidence": 0.97,
+                "quality_score": 0.92,
+                "dimensions": {
+                    "completeness": 0.95,
+                    "consistency": 0.90,
+                    "clinical_accuracy": 0.93,
+                    "format_compliance": 0.90,
+                },
             })
 
         # DRAFT stage: generate the free-text report

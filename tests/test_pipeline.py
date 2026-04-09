@@ -205,6 +205,46 @@ def test_safety_approves_valid_draft():
     assert result.safety_result["approved"] is True
 
 
+def test_safety_stores_quality_score():
+    """
+    The enhanced safety stage should extract quality_score and dimensions
+    from the LLM response and store them on the context.
+    These fields power the quality scoring feature.
+    """
+    llm = MockLLMClient()
+    ctx = _ctx()
+    ctx.draft_text = "RADIOLOGY REPORT\nFindings: normal."
+    result = stage_safety(ctx, llm)
+    assert result.quality_score == 0.92
+    assert isinstance(result.quality_breakdown, dict)
+    assert "completeness" in result.quality_breakdown
+    assert result.quality_breakdown["completeness"] == 0.95
+
+
+def test_safety_quality_score_none_on_missing_fields():
+    """
+    If the LLM omits quality fields (e.g. older model, malformed response),
+    quality_score stays None — no crash, no validation error.
+    This is called graceful degradation: the pipeline keeps working even
+    when optional enrichment is missing.
+    """
+    class NoQualityLLM(MockLLMClient):
+        def complete(self, prompt):
+            import json
+            return json.dumps({
+                "approved": True,
+                "issues": [],
+                "confidence": 0.9,
+                # deliberately omitting quality_score and dimensions
+            })
+
+    ctx = _ctx()
+    ctx.draft_text = "RADIOLOGY REPORT\nFindings: normal."
+    result = stage_safety(ctx, NoQualityLLM())
+    assert result.quality_score is None
+    assert result.quality_breakdown is None
+
+
 def test_safety_raises_when_not_approved():
     """
     If the safety reviewer rejects the draft, the pipeline must stop.
@@ -249,3 +289,7 @@ def test_run_pipeline_end_to_end(db):
     draft = db.get(ReportDraft, ctx.draft_id)
     assert draft is not None
     assert len(draft.draft_text) > 0
+
+    # Quality score was persisted
+    assert draft.quality_score == 0.92
+    assert draft.quality_breakdown is not None  # stored as JSON string

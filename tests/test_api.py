@@ -170,6 +170,11 @@ def test_get_draft_returns_report(client):
     # The model name should be recorded
     assert data["model_name"] == "MockLLMClient"
 
+    # Quality score should be present — the enhanced safety stage populates it
+    assert data["quality_score"] == 0.92
+    assert isinstance(data["quality_breakdown"], dict)
+    assert "completeness" in data["quality_breakdown"]
+
 
 def test_get_draft_before_pipeline_returns_404(client):
     """Asking for a draft before the pipeline has run should 404."""

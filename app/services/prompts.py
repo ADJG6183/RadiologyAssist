@@ -14,6 +14,8 @@ Prompt design principles used here:
   4. Output only  — tell Claude not to explain itself, just return the output
 """
 
+from typing import Optional
+
 
 def prompt_extract(transcript: str) -> str:
     """
@@ -102,13 +104,44 @@ EXTRACTED FIELDS:
 {prior_section}"""
 
 
-def prompt_safety(draft_text: str, structured_fields: dict) -> str:
+def prompt_safety(
+    draft_text: str,
+    structured_fields: dict,
+    rule_check_results: Optional[dict] = None,
+) -> str:
     """
     Stage 5 — SAFETY
     Ask Claude to review the draft for clinical and factual errors.
     We give it specific rules to check so it doesn't just rubber-stamp the report.
+
+    The optional rule_check_results parameter carries the output of the fast
+    deterministic pre-checks from app/services/quality.py.  When present, we
+    include those findings as a structured context block so Claude can focus
+    on clinical reasoning rather than re-checking things a regex already caught.
+
+    The JSON schema now includes quality_score and dimensions so that every
+    safety review simultaneously produces a quality rating — one LLM call,
+    two outputs.
     """
     import json
+
+    # Build the automated pre-checks section if rule results were passed in.
+    # This is like handing a checklist to the reviewer before they start reading —
+    # they know upfront which mechanical issues were already flagged.
+    pre_checks_section = ""
+    if rule_check_results:
+        violations = rule_check_results.get("rule_violations", [])
+        if violations:
+            pre_checks_section = (
+                "\n\nAUTOMATED PRE-CHECKS (already identified by rule engine — "
+                "factor these into your scores):\n"
+                + "\n".join(f"  - {v}" for v in violations)
+            )
+        else:
+            pre_checks_section = (
+                "\n\nAUTOMATED PRE-CHECKS: All mechanical checks passed "
+                "(headers present, laterality consistent, word count adequate)."
+            )
 
     return f"""You are a senior radiologist performing a quality review of a radiology report draft.
 
@@ -120,15 +153,22 @@ CHECKS TO PERFORM:
 3. Missing critical findings — are any critical findings from the extracted fields absent from the impression?
 4. Invented findings — does the report mention findings not present in the extracted fields?
 5. Incomplete impression — does the impression fail to address the most significant findings?
-6. Format violations — are any required sections (TECHNIQUE, FINDINGS, IMPRESSION) missing?
+6. Format violations — are any required sections (TECHNIQUE, FINDINGS, IMPRESSION) missing?{pre_checks_section}
 
 Return ONLY valid JSON — no explanation, no markdown, no code fences.
 
 Required JSON schema:
 {{
-  "approved": boolean,       // true only if no issues found
+  "approved": boolean,       // true only if no significant issues found
   "issues": [string],        // list of specific issue descriptions, empty if approved
-  "confidence": float        // your confidence in this review, 0.0 to 1.0
+  "confidence": float,       // your confidence in this review, 0.0 to 1.0
+  "quality_score": float,    // overall quality 0.0–1.0, mean of the four dimensions below
+  "dimensions": {{
+    "completeness": float,      // 0–1: all required clinical info present
+    "consistency": float,       // 0–1: no contradictions between fields and draft
+    "clinical_accuracy": float, // 0–1: findings are clinically coherent and plausible
+    "format_compliance": float  // 0–1: all required sections present and correctly labeled
+  }}
 }}
 
 EXTRACTED FIELDS:
