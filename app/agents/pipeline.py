@@ -78,15 +78,32 @@ def stage_retrieve(ctx: PipelineContext, db: Session) -> PipelineContext:
         .join(Study)
         .filter(Study.patient_id == study.patient_id)
         .filter(ReportDraft.study_id != ctx.study_id)
+        .filter(ReportDraft.status == "approved")   # never use rejected drafts as reference
         .order_by(ReportDraft.created_at.desc())
         .limit(3)
         .all()
     )
 
-    ctx.prior_reports = [
-        {"draft_id": r.draft_id, "text": r.draft_text[:300]}
-        for r in prior
-    ]
+    ctx.prior_reports = []
+    for r in prior:
+        # Use structured_json if available — it has clean impression/findings
+        # that are far more useful to Claude than raw truncated text.
+        # Fall back to the first 500 chars of draft_text if no structured data.
+        if r.structured_json:
+            try:
+                fields = json.loads(r.structured_json)
+                ctx.prior_reports.append({
+                    "draft_id": r.draft_id,
+                    "impression": fields.get("impression", ""),
+                    "findings": fields.get("findings", []),
+                })
+                continue
+            except json.JSONDecodeError:
+                pass
+        ctx.prior_reports.append({
+            "draft_id": r.draft_id,
+            "text": r.draft_text[:500],
+        })
 
     summary = f"study={ctx.study_id}, prior_reports={len(ctx.prior_reports)}"
     ctx.events.append(_event("RETRIEVE", "db_query", summary, t0))
@@ -199,6 +216,9 @@ def run_pipeline(study_id: int, transcript: str, db: Session) -> PipelineContext
     """
     Run all 6 stages in sequence for a given study and transcript.
     Returns the completed PipelineContext (contains draft_id, structured_fields, etc.)
+    
+    IMPROVEMENT: Now captures intermediate results and detailed error logs
+    so if a stage fails, you don't lose the work from previous stages.
     """
     llm = get_llm_client()
     ctx = PipelineContext(
@@ -207,12 +227,42 @@ def run_pipeline(study_id: int, transcript: str, db: Session) -> PipelineContext
         model_name=llm.model,
     )
 
-    ctx = stage_transcribe(ctx)
-    ctx = stage_retrieve(ctx, db)
-    ctx = stage_extract(ctx, llm)
-    ctx = stage_draft(ctx, llm)
-    ctx = stage_safety(ctx, llm)
-    ctx = stage_save(ctx, db)
+    stages = [
+        ("TRANSCRIBE", lambda: stage_transcribe(ctx)),
+        ("RETRIEVE", lambda: stage_retrieve(ctx, db)),
+        ("EXTRACT", lambda: stage_extract(ctx, llm)),
+        ("DRAFT", lambda: stage_draft(ctx, llm)),
+        ("SAFETY", lambda: stage_safety(ctx, llm)),
+        ("SAVE", lambda: stage_save(ctx, db)),
+    ]
+
+    # IMPROVEMENT: Loop through stages and catch errors individually
+    # This way if stage 4 fails, we've still logged stages 1-3's results
+    for stage_name, stage_fn in stages:
+        try:
+            stage_fn()
+        except Exception as e:
+            # Log the failure with full context
+            # This helps engineers understand exactly where the pipeline broke
+            error_event = {
+                "step": stage_name,
+                "tool_name": "ERROR",
+                "output_summary": f"FAILED: {str(e)[:200]}",  # first 200 chars of error
+                "latency_ms": 0,
+            }
+            ctx.events.append(error_event)
+
+            # Log to structured logging so we can search for pipeline failures
+            log.error(
+                "pipeline.stage_failed",
+                study_id=study_id,
+                stage=stage_name,
+                error=str(e),
+                exc_info=True,  # Include full stack trace
+            )
+
+            # Re-raise the error so the API knows something went wrong
+            raise RuntimeError(f"Pipeline failed at {stage_name}: {str(e)}") from e
 
     log.info("pipeline.complete", study_id=study_id, draft_id=ctx.draft_id)
     return ctx

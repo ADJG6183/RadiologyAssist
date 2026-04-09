@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import (
     Integer, String, Text, Date, DateTime,
-    ForeignKey, func,
+    ForeignKey, func, CheckConstraint, Index,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -26,6 +26,12 @@ class Patient(Base):
 
 class Study(Base):
     __tablename__ = "studies"
+    __table_args__ = (
+        # IMPROVEMENT: Indexes on frequently queried columns
+        # These make queries like "find studies for patient X" or "order studies by date" fast
+        Index("ix_studies_patient_id", "patient_id"),
+        Index("ix_studies_created_at", "created_at"),
+    )
 
     study_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.patient_id"), nullable=False)
@@ -42,6 +48,10 @@ class Study(Base):
 
 class ReportInput(Base):
     __tablename__ = "report_inputs"
+    __table_args__ = (
+        # IMPROVEMENT: Index on study_id so we can quickly find inputs for a study
+        Index("ix_report_inputs_study_id", "study_id"),
+    )
 
     input_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     study_id: Mapped[int] = mapped_column(ForeignKey("studies.study_id"), nullable=False)
@@ -54,6 +64,17 @@ class ReportInput(Base):
 
 class ReportDraft(Base):
     __tablename__ = "report_drafts"
+    __table_args__ = (
+        # Database-level guard — prevents any value other than these three
+        # from ever being written to status, even via direct DB access.
+        CheckConstraint("status IN ('draft', 'approved', 'rejected')", name="ck_report_drafts_status"),
+        # IMPROVEMENT: Indexes for common query patterns
+        # list_studies() needs to find the latest draft per study (study_id + order by created_at)
+        # The pipeline queries drafts by status, so that's indexed too
+        Index("ix_report_drafts_study_id", "study_id"),
+        Index("ix_report_drafts_status", "status"),
+        Index("ix_report_drafts_created_at", "created_at"),
+    )
 
     draft_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     study_id: Mapped[int] = mapped_column(ForeignKey("studies.study_id"), nullable=False)
@@ -63,11 +84,22 @@ class ReportDraft(Base):
     version: Mapped[Optional[str]] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    # Sign-off fields — populated when a radiologist approves or rejects the draft.
+    # status defaults to "draft"; valid values: "draft" | "approved" | "rejected"
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="draft")
+    actioned_by: Mapped[Optional[str]] = mapped_column(String(200))   # who approved or rejected
+    actioned_at: Mapped[Optional[datetime]] = mapped_column(DateTime)  # when they did it
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text)      # only set on rejection
+
     study: Mapped["Study"] = relationship(back_populates="report_drafts")
 
 
 class AgentEvent(Base):
     __tablename__ = "agent_events"
+    __table_args__ = (
+        # IMPROVEMENT: Index on study_id so we can quickly load audit trail for a study
+        Index("ix_agent_events_study_id", "study_id"),
+    )
 
     event_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     study_id: Mapped[int] = mapped_column(ForeignKey("studies.study_id"), nullable=False)

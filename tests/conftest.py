@@ -21,10 +21,14 @@ import os
 import pytest
 
 # Force test settings BEFORE any app module is imported.
-# TEST_MODE=1   → SQLite in-memory instead of MS SQL
-# LLM_PROVIDER=mock → never call the real Anthropic API in tests
+# TEST_MODE=1              → SQLite in-memory instead of MS SQL
+# LLM_PROVIDER=mock        → never call the real Anthropic API in tests
+# TRANSCRIPTION_PROVIDER=mock → never call the real Whisper API in tests
+# AUDIO_UPLOAD_DIR=/tmp/... → don't try to write to /data which is read-only
 os.environ["TEST_MODE"] = "1"
 os.environ["LLM_PROVIDER"] = "mock"
+os.environ["TRANSCRIPTION_PROVIDER"] = "mock"
+os.environ["AUDIO_UPLOAD_DIR"] = "/tmp/radiology_test_audio"
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker

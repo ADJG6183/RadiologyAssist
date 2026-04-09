@@ -11,13 +11,14 @@ class Settings(BaseSettings):
 
     # App behaviour
     test_mode: int = 0          # 1 = use SQLite in-memory (no MS SQL needed)
-    llm_provider: str = "mock"  # mock | openai | anthropic
+    llm_provider: str = "mock"  # mock | anthropic
+    transcription_provider: str = "mock"  # mock | openai
     audio_upload_dir: str = "/data/audio"
     log_level: str = "INFO"
 
-    # Optional LLM keys (only needed if llm_provider != mock)
-    openai_api_key: str = ""
-    anthropic_api_key: str = ""
+    # API keys (only needed when the respective provider is active)
+    openai_api_key: str = ""      # used by transcription_provider=openai (Whisper)
+    anthropic_api_key: str = ""   # used by llm_provider=anthropic (Claude)
 
     model_config = SettingsConfigDict(
         env_file=".env",

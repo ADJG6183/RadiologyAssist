@@ -30,11 +30,17 @@ def get_db() -> Session:
     """
     FastAPI dependency — yields a DB session per request, always closes it.
 
+    On exception: rolls back any uncommitted changes before closing.
+    This guarantees the DB is never left in a partial state.
+
     Usage in a route:
         def my_route(db: Session = Depends(get_db)): ...
     """
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()

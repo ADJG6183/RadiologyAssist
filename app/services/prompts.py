@@ -63,9 +63,17 @@ def prompt_draft(
 
     prior_section = ""
     if prior_reports:
-        prior_section = "\n\nPRIOR REPORTS FOR CONTEXT (do not copy, use only for comparison):\n"
+        prior_section = "\n\nPRIOR APPROVED REPORTS FOR CONTEXT (do not copy, use only for comparison):\n"
         for i, r in enumerate(prior_reports, 1):
-            prior_section += f"Prior {i}: {r['text']}\n"
+            if "impression" in r:
+                # Structured form — most useful to Claude
+                findings_str = "; ".join(r["findings"]) if r["findings"] else "none recorded"
+                prior_section += (
+                    f"Prior {i} — Impression: {r['impression']} | "
+                    f"Key findings: {findings_str}\n"
+                )
+            else:
+                prior_section += f"Prior {i}: {r['text']}\n"
 
     return f"""You are an attending radiologist writing a formal diagnostic radiology report.
 

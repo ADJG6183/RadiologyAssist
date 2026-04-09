@@ -119,12 +119,13 @@ def test_retrieve_loads_prior_reports(db):
     """
     study_id = _seed_study(db)
 
-    # Add a prior draft on that same study (simulating a prior report)
+    # Add a prior APPROVED draft — rejected drafts are excluded from context (fix #4)
     prior = ReportDraft(
         study_id=study_id,
         draft_text="Prior report text.",
         model_name="MockLLMClient",
         version="1.0",
+        status="approved",
     )
     db.add(prior)
     db.commit()

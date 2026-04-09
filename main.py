@@ -10,9 +10,11 @@ and teardown code after it shuts down.  Using it for table creation means
 SQLite (TEST_MODE=1) always has its schema ready without a separate migration step.
 """
 
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from app.api.studies import router as studies_router
 from app.core.logging import get_logger
@@ -43,3 +45,10 @@ app = FastAPI(
 )
 
 app.include_router(studies_router, prefix="/api/v1")
+
+# Serve the single-page UI from /
+# The API routes registered above always win because FastAPI evaluates routes
+# in order of registration — the catch-all below only fires for non-API paths.
+@app.get("/", include_in_schema=False)
+def serve_ui():
+    return FileResponse(os.path.join(os.path.dirname(__file__), "static", "index.html"))
