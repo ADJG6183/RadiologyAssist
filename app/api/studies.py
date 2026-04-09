@@ -452,6 +452,44 @@ def reject_draft(study_id: int, body: RejectIn, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# POST /studies/{study_id}/dicom
+# Upload a DICOM file and attach it to the study.  The pipeline's
+# ANALYZE_IMAGE stage will use it on the next /run call.
+# ---------------------------------------------------------------------------
+
+@router.post("/studies/{study_id}/dicom", status_code=201)
+def upload_dicom(
+    study_id: int,
+    dicom_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Upload a DICOM file for a study.
+
+    Saves the file to dicom_upload_dir and records the path in study.dicom_uri.
+    On the next /run call, ANALYZE_IMAGE will load this file and pass windowed
+    PNG slices to Claude's vision API before the EXTRACT stage runs.
+
+    Calling this endpoint again with a new file overwrites the previous URI —
+    only the most-recently-uploaded DICOM is used by the pipeline.
+    """
+    study = _require_study(db, study_id)
+
+    upload_dir = settings.dicom_upload_dir
+    os.makedirs(upload_dir, exist_ok=True)
+    ts = int(time.time())
+    dest = os.path.join(upload_dir, f"study_{study_id}_{ts}_{dicom_file.filename}")
+    with open(dest, "wb") as fh:
+        fh.write(dicom_file.file.read())
+
+    study.dicom_uri = dest
+    db.commit()
+
+    log.info("api.dicom_uploaded", study_id=study_id, path=dest)
+    return {"study_id": study_id, "dicom_uri": dest}
+
+
+# ---------------------------------------------------------------------------
 # Internal helper
 # ---------------------------------------------------------------------------
 

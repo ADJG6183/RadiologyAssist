@@ -17,12 +17,20 @@ Prompt design principles used here:
 from typing import Optional
 
 
-def prompt_extract(transcript: str) -> str:
+def prompt_extract(transcript: str, image_findings: Optional[str] = None) -> str:
     """
     Stage 3 — EXTRACT
     Ask Claude to pull structured fields out of the raw dictation.
     We specify the exact JSON schema so the output is always consistent.
+
+    The optional image_findings parameter carries the output of the ANALYZE_IMAGE
+    stage.  When present, it is included as additional visual context so the
+    extraction can reconcile dictation with what was actually seen on the images.
     """
+    image_section = ""
+    if image_findings:
+        image_section = f"\n\nIMAGE ANALYSIS FINDINGS (from DICOM review — use to supplement, not replace, dictation):\n{image_findings}\n"
+
     return f"""You are a clinical data extraction system for a radiology department.
 
 Extract structured fields from the radiology dictation below.
@@ -46,9 +54,49 @@ Rules:
 - Do not invent findings that are not in the dictation.
 - Separate each distinct finding into its own list item.
 - critical_findings must only contain findings that are clinically urgent.
-
+{image_section}
 Dictation:
 {transcript}"""
+
+
+def prompt_analyze_image(metadata: dict, num_slices: int) -> str:
+    """
+    Stage 3a — ANALYZE_IMAGE
+    Ask Claude to describe what it sees in the provided DICOM PNG images.
+
+    Called with the windowed PNG bytes via llm.vision_complete().
+    The metadata dict (from DICOMProcessor.extract_metadata()) gives Claude
+    clinical context: which body part, which modality, slice thickness, etc.
+
+    Returns JSON with visual_findings, visual_impression, image_quality,
+    and windows_reviewed so the downstream EXTRACT stage can use it.
+    """
+    import json
+
+    return f"""You are an expert radiologist reviewing DICOM images from a {metadata.get('modality', 'CT')} examination.
+
+The images shown are windowed PNG representations of {num_slices} representative slice(s).
+Each slice is shown twice: once with lung windowing (centre=-600 HU, width=1500) and once
+with mediastinal windowing (centre=+40 HU, width=400).
+
+Scan metadata:
+{json.dumps(metadata, indent=2)}
+
+Review all provided images carefully and return a structured visual analysis.
+Return ONLY valid JSON — no explanation, no markdown, no code fences.
+
+Required JSON schema:
+{{
+  "visual_findings": [string],    // list of specific visual observations per structure
+  "visual_impression": string,    // single-sentence overall impression from images alone
+  "image_quality": string,        // "Diagnostic", "Suboptimal", or "Non-diagnostic"
+  "windows_reviewed": [string]    // windows used: ["lung", "mediastinal"]
+}}
+
+Rules:
+- Describe only what you can see — do not invent findings.
+- Separate findings by anatomical structure (lungs, heart, mediastinum, etc.).
+- If image quality prevents confident assessment, state that in image_quality."""
 
 
 def prompt_draft(

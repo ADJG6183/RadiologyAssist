@@ -2,64 +2,88 @@
 <!--
   Radiology AI Assistant — Single-Page UI
   =========================================
-  Built with:
-    • Tailwind CSS (CDN) — utility-first styling, no custom CSS file needed
-    • Alpine.js (CDN)    — lightweight reactive JS, no build step
-    • Inter font         — clean sans-serif used in medical software
+  Design system: inspired by Johnson & Johnson (jnj.com)
+    • Primary red: #CC0000 — authority, trust, healthcare leadership
+    • Clean white backgrounds with generous spacing
+    • Bold typography hierarchy (JnJ Sans → Inter as web fallback)
+    • Cards with subtle shadows, not heavy borders
+    • Red CTAs, ghost secondary buttons
 
-  How it works (the "SPA" idea):
-    All the HTML for every screen is already in this file. Alpine.js shows
-    or hides sections based on the `view` and `currentTab` state variables.
-    When you click a study, the page doesn't reload — JS just swaps which
-    section is visible and fetches fresh data from the FastAPI backend.
-    This is exactly how Gmail or Google Maps works.
+  Built with:
+    • Tailwind CSS (CDN)
+    • Alpine.js (CDN)
+    • Inter font (web fallback for JnJ Sans)
+
+  Error handling: two tiers
+    • Toast — brief confirmations (saved, approved, etc.)
+    • Error Modal — blocks the user for failures that need attention
 -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Radiology AI Assistant</title>
+  <title>Radiology AI — Report Assistant</title>
 
-  <!-- Tailwind CSS — loads all utility classes from a CDN so we never write .css files -->
   <script src="https://cdn.tailwindcss.com"></script>
-
-  <!-- Alpine.js — "defer" means it runs after the HTML is ready -->
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-
-  <!-- Inter font — same font used in Figma, Linear, and most modern dashboards -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 
   <style>
-    /* Apply Inter everywhere */
     body { font-family: 'Inter', system-ui, sans-serif; }
-
-    /* Alpine hides elements with x-cloak before it initialises — prevents flash of unstyled content */
     [x-cloak] { display: none !important; }
 
-    /* Spinner keyframe — used on loading buttons */
     @keyframes spin { to { transform: rotate(360deg); } }
-    .spinner { animation: spin 0.8s linear infinite; }
+    .spinner { animation: spin 0.7s linear infinite; will-change: transform; }
 
-    /* Smooth fade for toast notification */
-    @keyframes slideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-    .toast-enter { animation: slideIn 0.2s ease-out; }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .toast-enter { animation: fadeUp 0.25s ease-out; will-change: transform, opacity; }
 
-    /* Report text formatting
-       white-space: pre-line tells the browser to honour newlines in the text
-       as real line breaks — same as pressing Enter in a word processor.
-       This replaces the JS split/join/map dance that was adding <p> tags. */
-    .report-body { white-space: pre-line; line-height: 1.75; color: #1f2937; }
-    .report-body strong { display: block; margin-top: 0.875rem; font-weight: 600; color: #374151; }
+    @keyframes modalIn {
+      from { opacity: 0; transform: scale(0.96) translateY(8px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .modal-enter { animation: modalIn 0.2s ease-out; will-change: transform, opacity; }
+
+    /* Report body — preserve newlines, highlight section headers */
+    .report-body { white-space: pre-line; line-height: 1.8; color: #1a1a1a; font-size: 0.875rem; }
+    .report-body strong { display: block; margin-top: 1.1rem; font-weight: 700; color: #CC0000; letter-spacing: 0.02em; font-size: 0.75rem; text-transform: uppercase; }
+
+    /* J&J-style red underline accent on section headings */
+    .jnj-heading::after {
+      content: '';
+      display: block;
+      width: 2.5rem;
+      height: 3px;
+      background: #CC0000;
+      margin-top: 0.5rem;
+      border-radius: 2px;
+    }
+
+    /* Smooth tab indicator */
+    .tab-active { border-bottom: 3px solid #CC0000; color: #CC0000; }
+
+    /* Input focus ring matches J&J red */
+    input:focus, textarea:focus, select:focus {
+      outline: none;
+      border-color: #CC0000;
+      box-shadow: 0 0 0 3px rgba(204,0,0,0.12);
+    }
   </style>
 
-  <!-- Tailwind config — extend with custom colors for clinical status badges -->
   <script>
     tailwind.config = {
       theme: {
         extend: {
           colors: {
-            clinical: { blue: '#2563eb' }
+            jnj: {
+              red:     '#CC0000',
+              redDark: '#990000',
+              redLight:'#fff0f0',
+            }
           }
         }
       }
@@ -67,89 +91,79 @@
   </script>
 </head>
 
-<body class="bg-slate-50 text-slate-900 min-h-screen" x-data="radiologyApp()" x-init="init()" x-cloak>
+<body class="bg-gray-50 text-gray-900 min-h-screen" x-data="radiologyApp()" x-init="init()" x-cloak>
 
   <!-- =====================================================================
-       TOP NAVIGATION BAR
-       The nav stays fixed at the top — the main content scrolls beneath it.
+       NAVIGATION — J&J style: white bar, red logo accent, clean spacing
        ===================================================================== -->
-  <nav class="bg-white border-b border-slate-200 sticky top-0 z-40">
-    <div class="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
+  <nav class="bg-white shadow-sm sticky top-0 z-40 border-b border-gray-100">
+    <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
 
-      <!-- Logo + title — clicking returns to the studies list -->
-      <button @click="goToStudies()" class="flex items-center gap-2 hover:opacity-80 transition-opacity">
-        <!-- Simple stethoscope-inspired icon using SVG -->
-        <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+      <!-- Logo -->
+      <button @click="goToStudies()" class="flex items-center gap-3 group">
+        <div class="flex items-center justify-center w-9 h-9 rounded bg-jnj-red flex-shrink-0">
           <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
           </svg>
         </div>
-        <div class="text-left">
-          <div class="text-sm font-semibold text-slate-900 leading-tight">Radiology AI</div>
-          <div class="text-xs text-slate-400 leading-tight">Dictation → Report</div>
+        <div class="text-left leading-tight">
+          <div class="text-sm font-bold text-gray-900 tracking-tight group-hover:text-jnj-red transition-colors">
+            Radiology AI
+          </div>
+          <div class="text-xs text-gray-400 font-normal">Report Assistant</div>
         </div>
       </button>
 
-      <!-- Right side: New Study button (only shown on the studies list view) -->
+      <!-- Nav actions -->
       <div class="flex items-center gap-3">
-        <button
-          x-show="view === 'studies'"
-          @click="openCreateModal()"
-          class="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-          </svg>
-          New Study
-        </button>
-
-        <!-- Back button shown inside study detail -->
         <button
           x-show="view === 'study'"
           @click="goToStudies()"
-          class="flex items-center gap-1.5 text-slate-600 hover:text-slate-900 text-sm font-medium px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors">
+          class="flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-jnj-red px-3 py-2 rounded transition-colors">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
           </svg>
           All Studies
         </button>
+
+        <button
+          x-show="view === 'studies'"
+          @click="openCreateModal()"
+          class="flex items-center gap-2 bg-jnj-red hover:bg-jnj-redDark text-white text-sm font-semibold px-5 py-2 rounded transition-colors shadow-sm">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+          </svg>
+          New Study
+        </button>
       </div>
+
     </div>
   </nav>
 
 
   <!-- =====================================================================
-       TOAST NOTIFICATION
-       Appears in the bottom-right corner for ~4 seconds, then disappears.
-       Alpine's x-show + CSS transition handles the fade without any JS.
-       
-       IMPROVEMENT: Added role="alert" and aria-live="polite" so screen
-       readers announce toasts to users. role="alert" tells assistive tech
-       this is a time-sensitive notification that needs to be read immediately.
+       TOAST — brief confirmations only (success / info / warning)
+       Errors go to the Error Modal below — they need acknowledgement.
        ===================================================================== -->
   <div
     x-show="toast !== null"
     x-transition:enter="toast-enter"
-    role="alert"
+    role="status"
     aria-live="polite"
-    aria-atomic="true"
-    class="fixed bottom-6 right-6 z-50 max-w-sm"
+    class="fixed bottom-6 right-6 z-50 max-w-xs"
     style="display:none">
-    <div
+    <div class="flex items-center gap-2.5 px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white"
       :class="{
-        'bg-green-600': toast?.type === 'success',
-        'bg-red-600':   toast?.type === 'error',
-        'bg-yellow-500': toast?.type === 'warning',
-        'bg-slate-700': !toast?.type || toast?.type === 'info',
-      }"
-      class="text-white text-sm font-medium px-4 py-3 rounded-xl shadow-lg flex items-center gap-2">
-      <!-- Checkmark icon for success -->
+        'bg-green-600':  toast?.type === 'success',
+        'bg-amber-500':  toast?.type === 'warning',
+        'bg-gray-800':   toast?.type === 'info' || !toast?.type,
+      }">
       <svg x-show="toast?.type === 'success'" class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
       </svg>
-      <!-- X icon for error -->
-      <svg x-show="toast?.type === 'error'" class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+      <svg x-show="toast?.type === 'warning'" class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
       </svg>
       <span x-text="toast?.message"></span>
     </div>
@@ -157,68 +171,123 @@
 
 
   <!-- =====================================================================
-       MAIN CONTENT AREA
+       ERROR MODAL — blocks the user until dismissed.
+       Used for pipeline failures, network errors, API errors.
+       Unlike a toast, an error modal says: "you need to know about this
+       before you continue." It won't disappear on its own.
        ===================================================================== -->
-  <main class="max-w-6xl mx-auto px-6 py-8">
+  <div
+    x-show="errorModal !== null"
+    @keydown.escape.window="errorModal = null"
+    class="fixed inset-0 z-50 flex items-center justify-center p-4"
+    role="alertdialog"
+    aria-modal="true"
+    :aria-label="'Error: ' + (errorModal?.title || 'An error occurred')"
+    style="display:none">
+
+    <!-- Dark backdrop -->
+    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="errorModal = null"></div>
+
+    <!-- Modal card -->
+    <div class="modal-enter relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+
+      <!-- Red accent bar at top — J&J signature stripe -->
+      <div class="h-1.5 bg-jnj-red w-full"></div>
+
+      <div class="px-6 py-5">
+        <!-- Icon + title -->
+        <div class="flex items-start gap-4 mb-4">
+          <div class="flex-shrink-0 w-10 h-10 rounded-full bg-red-50 flex items-center justify-center mt-0.5">
+            <svg class="w-5 h-5 text-jnj-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-gray-900" x-text="errorModal?.title || 'Something went wrong'"></h3>
+            <p class="text-sm text-gray-500 mt-1 leading-relaxed" x-text="errorModal?.message"></p>
+          </div>
+        </div>
+
+        <!-- Technical detail (collapsible) — helpful for debugging -->
+        <template x-if="errorModal?.detail">
+          <details class="mb-4 bg-gray-50 rounded-lg overflow-hidden">
+            <summary class="px-3 py-2 text-xs font-medium text-gray-500 cursor-pointer hover:bg-gray-100 select-none">
+              Technical detail
+            </summary>
+            <pre class="px-3 pb-3 text-xs text-gray-600 whitespace-pre-wrap break-words"
+              x-text="errorModal.detail"></pre>
+          </details>
+        </template>
+
+        <!-- Dismiss -->
+        <div class="flex justify-end">
+          <button type="button" @click="errorModal = null"
+            class="bg-jnj-red hover:bg-jnj-redDark text-white text-sm font-semibold px-5 py-2 rounded transition-colors">
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 
 
-    <!-- ===================================================================
+  <!-- =====================================================================
+       MAIN CONTENT
+       ===================================================================== -->
+  <main class="max-w-6xl mx-auto px-6 py-10">
+
+
+    <!-- =================================================================
          VIEW: STUDIES LIST
-         Shows when view === 'studies'
-         =================================================================== -->
+         ================================================================= -->
     <div x-show="view === 'studies'" x-cloak>
 
-      <!-- Page heading -->
-      <div class="mb-6">
-        <h1 class="text-2xl font-bold text-slate-900">Studies</h1>
-        <p class="text-sm text-slate-500 mt-1">Select a study to submit dictation and generate a report.</p>
+      <!-- Page header -->
+      <div class="mb-8">
+        <h1 class="text-3xl font-extrabold text-gray-900 tracking-tight jnj-heading">Studies</h1>
+        <p class="text-sm text-gray-500 mt-3">Select a study to submit dictation and generate an AI-assisted report.</p>
       </div>
 
-      <!-- Loading skeleton — shows while studies are being fetched -->
+      <!-- Loading skeleton -->
       <div x-show="studiesLoading" class="space-y-3">
         <template x-for="i in 4">
-          <div class="bg-white rounded-xl border border-slate-200 p-4 animate-pulse">
+          <div class="bg-white rounded-xl shadow-sm p-4 animate-pulse">
             <div class="flex items-center gap-4">
-              <div class="w-12 h-6 bg-slate-200 rounded-full"></div>
+              <div class="w-14 h-6 bg-gray-200 rounded-full"></div>
               <div class="flex-1 space-y-2">
-                <div class="w-48 h-4 bg-slate-200 rounded"></div>
-                <div class="w-32 h-3 bg-slate-100 rounded"></div>
+                <div class="w-48 h-4 bg-gray-200 rounded"></div>
+                <div class="w-32 h-3 bg-gray-100 rounded"></div>
               </div>
-              <div class="w-16 h-6 bg-slate-200 rounded-full"></div>
+              <div class="w-16 h-6 bg-gray-200 rounded-full"></div>
             </div>
           </div>
         </template>
       </div>
 
-      <!-- Error state -->
-      <div x-show="studiesError && !studiesLoading" class="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
-        <p class="text-red-700 text-sm font-medium" x-text="'Failed to load studies: ' + studiesError"></p>
-        <button @click="loadStudies()" class="mt-3 text-red-600 text-sm underline">Try again</button>
-      </div>
-
-      <!-- Empty state — no studies yet -->
+      <!-- Empty state -->
       <div x-show="!studiesLoading && !studiesError && studies.length === 0"
-           class="bg-white border border-slate-200 rounded-xl p-12 text-center">
-        <div class="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg class="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+           class="bg-white rounded-2xl shadow-sm p-14 text-center">
+        <div class="w-14 h-14 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-5">
+          <svg class="w-7 h-7 text-jnj-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
               d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
           </svg>
         </div>
-        <h3 class="text-slate-700 font-semibold mb-1">No studies yet</h3>
-        <p class="text-slate-400 text-sm mb-4">Create your first study to get started.</p>
+        <h3 class="text-lg font-bold text-gray-800 mb-1">No studies yet</h3>
+        <p class="text-sm text-gray-400 mb-6">Create your first study to begin the reporting workflow.</p>
         <button @click="openCreateModal()"
-          class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
-          Create Study
+          class="bg-jnj-red hover:bg-jnj-redDark text-white text-sm font-semibold px-6 py-2.5 rounded transition-colors shadow-sm">
+          Create First Study
         </button>
       </div>
 
       <!-- Studies table -->
       <div x-show="!studiesLoading && !studiesError && studies.length > 0"
-           class="bg-white border border-slate-200 rounded-xl overflow-hidden">
+           class="bg-white rounded-2xl shadow-sm overflow-hidden">
 
         <!-- Table header -->
-        <div class="grid grid-cols-12 gap-4 px-5 py-3 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+        <div class="grid grid-cols-12 gap-4 px-6 py-3 bg-gray-50 border-b border-gray-100 text-xs font-bold text-gray-400 uppercase tracking-widest">
           <div class="col-span-1">Type</div>
           <div class="col-span-3">Patient</div>
           <div class="col-span-2">MRN</div>
@@ -227,51 +296,51 @@
           <div class="col-span-2">Status</div>
         </div>
 
-        <!-- Study rows -->
+        <!-- Rows -->
         <template x-for="study in studies" :key="study.study_id">
           <div
             @click="selectStudy(study.study_id)"
-            class="grid grid-cols-12 gap-4 px-5 py-4 border-b border-slate-100 last:border-0 hover:bg-blue-50 cursor-pointer transition-colors group">
+            class="grid grid-cols-12 gap-4 px-6 py-4 border-b border-gray-50 last:border-0 hover:bg-red-50 cursor-pointer transition-colors group">
 
-            <!-- Modality badge (CT, MRI, etc.) -->
+            <!-- Modality badge -->
             <div class="col-span-1 flex items-center">
               <span :class="modalityBadge(study.modality)"
-                class="text-xs font-semibold px-2 py-0.5 rounded-full">
+                class="text-xs font-bold px-2.5 py-0.5 rounded-full">
                 <span x-text="study.modality"></span>
               </span>
             </div>
 
             <!-- Patient name -->
             <div class="col-span-3 flex items-center">
-              <span class="font-medium text-slate-900 group-hover:text-blue-700 transition-colors"
+              <span class="font-semibold text-gray-900 group-hover:text-jnj-red transition-colors text-sm"
                 x-text="study.patient_name"></span>
             </div>
 
             <!-- MRN -->
             <div class="col-span-2 flex items-center">
-              <span class="text-slate-500 text-sm font-mono" x-text="study.mrn"></span>
+              <span class="text-gray-400 text-sm font-mono" x-text="study.mrn"></span>
             </div>
 
             <!-- Study date -->
             <div class="col-span-2 flex items-center">
-              <span class="text-slate-600 text-sm" x-text="formatDate(study.study_date)"></span>
+              <span class="text-gray-500 text-sm" x-text="formatDate(study.study_date)"></span>
             </div>
 
             <!-- Institution -->
             <div class="col-span-2 flex items-center">
-              <span class="text-slate-500 text-sm" x-text="study.institution || '—'"></span>
+              <span class="text-gray-400 text-sm" x-text="study.institution || '—'"></span>
             </div>
 
-            <!-- Draft status badge -->
+            <!-- Status -->
             <div class="col-span-2 flex items-center">
               <template x-if="study.latest_draft_status">
                 <span :class="statusBadge(study.latest_draft_status)"
-                  class="text-xs font-medium px-2.5 py-1 rounded-full capitalize"
+                  class="text-xs font-semibold px-2.5 py-1 rounded-full capitalize"
                   x-text="study.latest_draft_status">
                 </span>
               </template>
               <template x-if="!study.latest_draft_status">
-                <span class="text-xs text-slate-400">No draft</span>
+                <span class="text-xs text-gray-300 font-medium">Pending</span>
               </template>
             </div>
           </div>
@@ -280,152 +349,129 @@
     </div><!-- /studies view -->
 
 
-    <!-- ===================================================================
+    <!-- =================================================================
          VIEW: STUDY DETAIL
-         Shows when view === 'study'
-         =================================================================== -->
+         ================================================================= -->
     <div x-show="view === 'study'" x-cloak>
 
-      <!-- Loading state while fetching study -->
+      <!-- Loading -->
       <div x-show="studyLoading" class="animate-pulse space-y-4">
-        <div class="w-64 h-7 bg-slate-200 rounded"></div>
-        <div class="w-40 h-4 bg-slate-100 rounded"></div>
+        <div class="w-64 h-8 bg-gray-200 rounded"></div>
+        <div class="w-40 h-4 bg-gray-100 rounded"></div>
       </div>
 
-      <!-- Study content -->
       <div x-show="!studyLoading && currentStudy">
 
         <!-- Study header card -->
-        <div class="bg-white border border-slate-200 rounded-xl p-5 mb-6">
-          <div class="flex items-start justify-between flex-wrap gap-4">
+        <div class="bg-white rounded-2xl shadow-sm overflow-hidden mb-7">
+          <!-- J&J red top stripe -->
+          <div class="h-1 bg-jnj-red"></div>
+          <div class="px-6 py-5 flex items-start justify-between gap-4 flex-wrap">
             <div>
-              <!-- Patient name + modality -->
-              <div class="flex items-center gap-2 mb-1">
+              <div class="flex items-center gap-2.5 mb-2">
                 <span :class="modalityBadge(currentStudy?.modality)"
-                  class="text-xs font-semibold px-2 py-0.5 rounded-full"
+                  class="text-xs font-bold px-2.5 py-0.5 rounded-full"
                   x-text="currentStudy?.modality">
                 </span>
-                <h2 class="text-xl font-bold text-slate-900"
+                <h2 class="text-xl font-extrabold text-gray-900 tracking-tight"
                   x-text="currentStudy?.patient?.first_name + ' ' + currentStudy?.patient?.last_name">
                 </h2>
               </div>
-              <!-- Patient details row -->
-              <div class="flex items-center gap-4 text-sm text-slate-500 flex-wrap">
+              <div class="flex items-center gap-5 text-sm text-gray-400 flex-wrap">
                 <span>
-                  <span class="font-medium text-slate-600">MRN:</span>
-                  <span class="font-mono ml-1" x-text="currentStudy?.patient?.mrn"></span>
+                  <span class="font-semibold text-gray-500">MRN</span>
+                  <span class="font-mono ml-1.5" x-text="currentStudy?.patient?.mrn"></span>
                 </span>
                 <span>
-                  <span class="font-medium text-slate-600">DOB:</span>
-                  <span class="ml-1" x-text="formatDate(currentStudy?.patient?.date_of_birth)"></span>
+                  <span class="font-semibold text-gray-500">DOB</span>
+                  <span class="ml-1.5" x-text="formatDate(currentStudy?.patient?.date_of_birth)"></span>
                 </span>
                 <span>
-                  <span class="font-medium text-slate-600">Study Date:</span>
-                  <span class="ml-1" x-text="formatDate(currentStudy?.study_date)"></span>
+                  <span class="font-semibold text-gray-500">Study Date</span>
+                  <span class="ml-1.5" x-text="formatDate(currentStudy?.study_date)"></span>
                 </span>
                 <template x-if="currentStudy?.institution">
                   <span>
-                    <span class="font-medium text-slate-600">Institution:</span>
-                    <span class="ml-1" x-text="currentStudy?.institution"></span>
+                    <span class="font-semibold text-gray-500">Institution</span>
+                    <span class="ml-1.5" x-text="currentStudy?.institution"></span>
                   </span>
                 </template>
               </div>
             </div>
-
-            <!-- Draft status pill (top right) -->
             <div x-show="currentStudy?.latest_draft_status">
               <span :class="statusBadge(currentStudy?.latest_draft_status)"
-                class="text-sm font-medium px-3 py-1 rounded-full capitalize"
+                class="text-sm font-semibold px-3 py-1 rounded-full capitalize"
                 x-text="currentStudy?.latest_draft_status">
               </span>
             </div>
           </div>
         </div>
 
-        <!-- ----------------------------------------------------------------
-             TABS — Dictation | Report | Audit Trail
-             Think of tabs like dividers in a binder — each tab shows a
-             different section of information for the same study.
-             ---------------------------------------------------------------- -->
-        <div class="mb-5">
-          <div class="flex gap-1 border-b border-slate-200">
-
-            <button @click="currentTab = 'dictation'"
-              :class="currentTab === 'dictation'
-                ? 'border-b-2 border-blue-600 text-blue-600 font-semibold'
-                : 'text-slate-500 hover:text-slate-700'"
-              class="px-4 py-2.5 text-sm transition-colors -mb-px">
-              Dictation
-            </button>
-
-            <button @click="currentTab = 'report'"
-              :class="currentTab === 'report'
-                ? 'border-b-2 border-blue-600 text-blue-600 font-semibold'
-                : 'text-slate-500 hover:text-slate-700'"
-              class="px-4 py-2.5 text-sm transition-colors -mb-px flex items-center gap-1.5">
-              Report
-              <!-- Green dot if draft exists -->
-              <span x-show="draft" class="w-2 h-2 rounded-full"
-                :class="{
-                  'bg-green-500': draft?.status === 'approved',
-                  'bg-yellow-400': draft?.status === 'draft',
-                  'bg-red-400': draft?.status === 'rejected',
-                }">
-              </span>
-            </button>
-
-            <button @click="currentTab = 'events'; loadEvents(currentStudy.study_id)"
-              :class="currentTab === 'events'
-                ? 'border-b-2 border-blue-600 text-blue-600 font-semibold'
-                : 'text-slate-500 hover:text-slate-700'"
-              class="px-4 py-2.5 text-sm transition-colors -mb-px flex items-center gap-1.5">
-              Audit Trail
-              <span x-show="events.length > 0"
-                class="bg-slate-200 text-slate-600 text-xs font-semibold px-1.5 py-0.5 rounded-full"
-                x-text="events.length">
-              </span>
-            </button>
-
-          </div>
+        <!-- Tabs -->
+        <div class="flex gap-0 border-b border-gray-200 mb-6">
+          <button type="button" @click="currentTab = 'dictation'"
+            :class="currentTab === 'dictation' ? 'tab-active font-semibold' : 'text-gray-400 hover:text-gray-700'"
+            class="px-5 py-3 text-sm transition-colors -mb-px border-b-2 border-transparent">
+            Dictation
+          </button>
+          <button type="button" @click="currentTab = 'report'"
+            :class="currentTab === 'report' ? 'tab-active font-semibold' : 'text-gray-400 hover:text-gray-700'"
+            class="px-5 py-3 text-sm transition-colors -mb-px border-b-2 border-transparent flex items-center gap-1.5">
+            Report
+            <span x-show="draft" class="w-2 h-2 rounded-full"
+              :class="{
+                'bg-green-500':  draft?.status === 'approved',
+                'bg-amber-400':  draft?.status === 'draft',
+                'bg-jnj-red':    draft?.status === 'rejected',
+              }">
+            </span>
+          </button>
+          <button type="button" @click="currentTab = 'events'; loadEvents(currentStudy.study_id)"
+            :class="currentTab === 'events' ? 'tab-active font-semibold' : 'text-gray-400 hover:text-gray-700'"
+            class="px-5 py-3 text-sm transition-colors -mb-px border-b-2 border-transparent flex items-center gap-1.5">
+            Audit Trail
+            <span x-show="events.length > 0"
+              class="bg-gray-100 text-gray-500 text-xs font-bold px-1.5 py-0.5 rounded-full"
+              x-text="events.length">
+            </span>
+          </button>
         </div>
 
 
-        <!-- ================================================================
+        <!-- ============================================================
              TAB: DICTATION
-             The radiologist types (or pastes) their dictation here.
-             Clicking "Submit" saves it, clicking "Run Pipeline" generates
-             the structured report.
-             ================================================================ -->
-        <div x-show="currentTab === 'dictation'" class="space-y-4">
+             ============================================================ -->
+        <div x-show="currentTab === 'dictation'" class="space-y-5">
 
-          <!-- Instruction card -->
-          <div class="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-sm text-blue-800">
-            <strong>How it works:</strong> Type the radiology dictation below, click
-            <em>Save Dictation</em>, then click <em>Run Pipeline</em> to generate the AI report.
+          <!-- Instruction banner -->
+          <div class="bg-jnj-redLight border border-red-100 rounded-xl px-5 py-3.5 flex items-start gap-3">
+            <svg class="w-4 h-4 text-jnj-red flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <p class="text-sm text-red-800">
+              Type or paste the radiology dictation below, click <strong>Save Dictation</strong>,
+              then click <strong>Run Pipeline</strong> to generate the AI-assisted report.
+            </p>
           </div>
 
-          <!-- Dictation text area -->
-          <div class="bg-white border border-slate-200 rounded-xl p-5">
-            <label class="block text-sm font-medium text-slate-700 mb-2">
+          <!-- Dictation input card -->
+          <div class="bg-white rounded-2xl shadow-sm p-6">
+            <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
               Dictation Text
-              <span class="text-slate-400 font-normal ml-1">— describe findings as you would in a typical radiology session</span>
             </label>
             <textarea
               x-model="dictationText"
-              @input="saveDraftToStorage()"
               rows="6"
-              placeholder="e.g. CT chest without contrast. Lungs clear bilaterally. No pleural effusion. Heart size normal. No mediastinal lymphadenopathy..."
-              class="w-full text-sm text-slate-800 border border-slate-200 rounded-lg px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder:text-slate-300">
+              placeholder="e.g. CT chest without contrast. Lungs clear bilaterally. No pleural effusion. Heart size normal..."
+              class="w-full text-sm text-gray-800 border border-gray-200 rounded-lg px-4 py-3 resize-none placeholder:text-gray-300 transition-colors">
             </textarea>
 
-            <!-- Character count -->
-            <div class="flex items-center justify-between mt-2">
-              <span class="text-xs text-slate-400"
-                x-text="dictationText.length + ' characters'"></span>
+            <div class="flex items-center justify-between mt-3">
+              <span class="text-xs text-gray-300" x-text="dictationText.length + ' characters'"></span>
               <button
                 @click="submitDictation()"
                 :disabled="!dictationText.trim() || dictationSubmitting"
-                class="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+                class="flex items-center gap-2 bg-gray-800 hover:bg-gray-900 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded transition-colors">
                 <svg x-show="dictationSubmitting" class="spinner w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                   <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
@@ -435,27 +481,28 @@
             </div>
           </div>
 
-          <!-- Dictation feedback message -->
+          <!-- Inline success message after save -->
           <template x-if="dictationMessage">
-            <div :class="dictationMessage.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-700'"
-              class="border rounded-lg px-4 py-3 text-sm"
+            <div :class="dictationMessage.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-jnj-red'"
+              class="border rounded-lg px-4 py-3 text-sm font-medium"
               x-text="dictationMessage.text">
             </div>
           </template>
 
-          <!-- Run Pipeline section -->
-          <div class="bg-white border border-slate-200 rounded-xl p-5">
+          <!-- Run Pipeline card -->
+          <div class="bg-white rounded-2xl shadow-sm p-6">
             <div class="flex items-start justify-between gap-4 flex-wrap">
               <div>
-                <h3 class="font-semibold text-slate-800 text-sm">Generate Report</h3>
-                <p class="text-xs text-slate-500 mt-0.5">
-                  Runs the 6-stage AI pipeline: Transcribe → Retrieve → Extract → Draft → Safety → Save
+                <h3 class="font-bold text-gray-900 text-sm mb-1">Generate Report</h3>
+                <p class="text-xs text-gray-400 leading-relaxed">
+                  Runs the full AI pipeline:
+                  <span class="font-medium text-gray-500">Transcribe → Retrieve → Extract → Draft → Safety → Save</span>
                 </p>
               </div>
               <button
                 @click="runPipeline()"
                 :disabled="pipelineRunning"
-                class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium px-5 py-2.5 rounded-lg transition-colors">
+                class="flex items-center gap-2 bg-jnj-red hover:bg-jnj-redDark disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold px-6 py-2.5 rounded transition-colors shadow-sm">
                 <svg x-show="pipelineRunning" class="spinner w-4 h-4" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                   <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
@@ -463,29 +510,32 @@
                 <svg x-show="!pipelineRunning" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                 </svg>
-                <span x-text="pipelineRunning ? 'Running pipeline…' : 'Run Pipeline'"></span>
+                <span x-text="pipelineRunning ? 'Generating…' : 'Run Pipeline'"></span>
               </button>
             </div>
 
-            <!-- Pipeline stages progress bar (visual only while running) -->
+            <!-- Stage progress bar (visual only) -->
             <template x-if="pipelineRunning">
-              <div class="mt-4">
-                <div class="flex gap-1 text-xs text-slate-500 mb-1.5">
-                  <template x-for="(stage, i) in ['Transcribe','Retrieve','Extract','Draft','Safety','Save']" :key="i">
-                    <div class="flex-1 text-center">
-                      <div class="h-1.5 rounded-full mb-1 bg-blue-200" :style="`animation: pulse ${0.5 + i * 0.3}s ease-in-out infinite alternate`"></div>
-                      <span x-text="stage" class="leading-none"></span>
+              <div class="mt-5">
+                <div class="flex gap-1 mb-2">
+                  <template x-for="(s, i) in ['Transcribe','Retrieve','Extract','Draft','Safety','Save']" :key="i">
+                    <div class="flex-1 h-1 rounded-full bg-red-100 overflow-hidden">
+                      <div class="h-full bg-jnj-red rounded-full"
+                        :style="`animation: pulse ${0.6 + i * 0.25}s ease-in-out infinite alternate; width:100%`"></div>
                     </div>
+                  </template>
+                </div>
+                <div class="flex gap-1 text-xs text-gray-300">
+                  <template x-for="s in ['Transcribe','Retrieve','Extract','Draft','Safety','Save']" :key="s">
+                    <div class="flex-1 text-center" x-text="s"></div>
                   </template>
                 </div>
               </div>
             </template>
 
-            <!-- Pipeline result message -->
-            <template x-if="pipelineMessage">
-              <div class="mt-3"
-                :class="pipelineMessage.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-700'"
-                class="border rounded-lg px-4 py-3 text-sm"
+            <!-- Inline success after run -->
+            <template x-if="pipelineMessage && pipelineMessage.type === 'success'">
+              <div class="mt-4 bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800 font-medium"
                 x-text="pipelineMessage.text">
               </div>
             </template>
@@ -493,148 +543,143 @@
         </div><!-- /dictation tab -->
 
 
-        <!-- ================================================================
+        <!-- ============================================================
              TAB: REPORT
-             Displays the generated draft with approve / reject actions.
-             The report text uses a small formatting function to highlight
-             section headers (TECHNIQUE:, FINDINGS:, IMPRESSION:, etc.)
-             ================================================================ -->
-        <div x-show="currentTab === 'report'" class="space-y-4">
+             ============================================================ -->
+        <div x-show="currentTab === 'report'" class="space-y-5">
 
           <!-- No draft yet -->
           <div x-show="!draftLoading && !draft"
-            class="bg-white border border-slate-200 rounded-xl p-10 text-center">
-            <div class="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3">
-              <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            class="bg-white rounded-2xl shadow-sm p-12 text-center">
+            <div class="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg class="w-6 h-6 text-jnj-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
                   d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
               </svg>
             </div>
-            <p class="text-slate-500 text-sm">No report yet. Go to the <strong>Dictation</strong> tab to generate one.</p>
+            <p class="text-sm text-gray-400">No report yet. Go to the <strong class="text-gray-700">Dictation</strong> tab and run the pipeline.</p>
           </div>
 
-          <!-- Draft loading -->
-          <div x-show="draftLoading" class="bg-white border border-slate-200 rounded-xl p-6 animate-pulse space-y-3">
-            <div class="w-32 h-4 bg-slate-200 rounded"></div>
-            <div class="space-y-2">
-              <div class="w-full h-3 bg-slate-100 rounded"></div>
-              <div class="w-5/6 h-3 bg-slate-100 rounded"></div>
-              <div class="w-4/6 h-3 bg-slate-100 rounded"></div>
+          <!-- Draft loading skeleton -->
+          <div x-show="draftLoading" class="bg-white rounded-2xl shadow-sm p-6 animate-pulse space-y-3">
+            <div class="w-28 h-4 bg-gray-200 rounded"></div>
+            <div class="space-y-2 pt-1">
+              <div class="w-full h-3 bg-gray-100 rounded"></div>
+              <div class="w-5/6 h-3 bg-gray-100 rounded"></div>
+              <div class="w-4/6 h-3 bg-gray-100 rounded"></div>
             </div>
           </div>
 
-          <!-- Draft content -->
           <template x-if="!draftLoading && draft">
-            <div class="space-y-4">
+            <div class="space-y-5">
 
               <!-- Report header bar -->
-              <div class="bg-white border border-slate-200 rounded-xl px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
-                <div class="flex items-center gap-3">
-                  <span :class="statusBadge(draft.status)"
-                    class="text-xs font-semibold px-2.5 py-1 rounded-full capitalize"
-                    x-text="draft.status">
-                  </span>
-                  <span class="text-xs text-slate-400">
-                    Draft #<span x-text="draft.draft_id"></span>
-                    &nbsp;·&nbsp; Generated <span x-text="formatDateTime(draft.created_at)"></span>
-                  </span>
-                  <template x-if="draft.model_name">
-                    <span class="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-mono"
-                      x-text="draft.model_name"></span>
-                  </template>
+              <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+                <div class="h-1"
+                  :class="{
+                    'bg-green-500': draft.status === 'approved',
+                    'bg-amber-400': draft.status === 'draft',
+                    'bg-jnj-red':   draft.status === 'rejected',
+                  }">
                 </div>
+                <div class="px-6 py-4 flex items-center justify-between gap-3 flex-wrap">
+                  <div class="flex items-center gap-3 flex-wrap">
+                    <span :class="statusBadge(draft.status)"
+                      class="text-xs font-bold px-2.5 py-1 rounded-full capitalize"
+                      x-text="draft.status">
+                    </span>
+                    <span class="text-xs text-gray-400">
+                      Draft #<span x-text="draft.draft_id"></span>
+                      &nbsp;·&nbsp;
+                      <span x-text="formatDateTime(draft.created_at)"></span>
+                    </span>
+                    <template x-if="draft.model_name">
+                      <span class="text-xs bg-gray-100 text-gray-400 px-2 py-0.5 rounded font-mono"
+                        x-text="draft.model_name"></span>
+                    </template>
+                  </div>
 
-                <!-- Sign-off buttons (only shown for "draft" status) -->
-                <div x-show="draft.status === 'draft'" class="flex gap-2">
-                  <button @click="showApproveModal = true"
-                    class="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3.5 py-1.5 rounded-lg transition-colors">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
-                    </svg>
-                    Approve
-                  </button>
-                  <button @click="showRejectModal = true"
-                    class="flex items-center gap-1.5 bg-white hover:bg-red-50 text-red-600 border border-red-200 text-sm font-medium px-3.5 py-1.5 rounded-lg transition-colors">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
-                    </svg>
-                    Reject
-                  </button>
-                </div>
+                  <!-- Sign-off buttons -->
+                  <div x-show="draft.status === 'draft'" class="flex gap-2">
+                    <button @click="showApproveModal = true"
+                      class="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold px-4 py-1.5 rounded transition-colors">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+                      </svg>
+                      Approve
+                    </button>
+                    <button @click="showRejectModal = true"
+                      class="flex items-center gap-1.5 border border-jnj-red text-jnj-red hover:bg-jnj-redLight text-sm font-semibold px-4 py-1.5 rounded transition-colors">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+                      </svg>
+                      Reject
+                    </button>
+                  </div>
 
-                <!-- Who actioned it (once approved/rejected) -->
-                <div x-show="draft.status !== 'draft'" class="text-xs text-slate-500">
-                  <span x-text="draft.status === 'approved' ? 'Approved' : 'Rejected'"></span>
-                  by <strong x-text="draft.actioned_by"></strong>
-                  on <span x-text="formatDateTime(draft.actioned_at)"></span>
+                  <!-- Who actioned it -->
+                  <div x-show="draft.status !== 'draft'" class="text-xs text-gray-400">
+                    <span x-text="draft.status === 'approved' ? 'Approved' : 'Rejected'"></span>
+                    by <strong class="text-gray-600" x-text="draft.actioned_by"></strong>
+                    on <span x-text="formatDateTime(draft.actioned_at)"></span>
+                  </div>
                 </div>
               </div>
 
-              <!-- Rejection reason banner -->
+              <!-- Rejection reason -->
               <template x-if="draft.rejection_reason">
-                <div class="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
-                  <strong>Rejection reason:</strong>
+                <div class="bg-jnj-redLight border border-red-200 rounded-xl px-5 py-3.5 text-sm text-jnj-red">
+                  <strong class="font-bold">Rejection reason:</strong>
                   <span x-text="draft.rejection_reason" class="ml-1"></span>
                 </div>
               </template>
 
-              <!-- Quality Score Card
-                   Only shown when the pipeline produced quality data.
-                   Layout: overall score badge on the left, four dimension
-                   progress bars on the right. Each bar is colored by score:
-                     green  ≥ 0.80  — good
-                     yellow 0.60–0.79 — needs attention
-                     red    < 0.60   — significant issues
-              -->
+              <!-- Quality Score Card -->
               <template x-if="draft.quality_score !== null && draft.quality_score !== undefined">
-                <div class="bg-white border border-slate-200 rounded-xl p-5">
+                <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+                  <div class="px-6 py-4 border-b border-gray-50 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-jnj-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <span class="text-xs font-bold text-gray-400 uppercase tracking-widest">Quality Score</span>
+                  </div>
+                  <div class="px-6 py-5 flex items-center gap-6 flex-wrap">
 
-                  <div class="flex items-start gap-5 flex-wrap">
-
-                    <!-- Overall score circle -->
+                    <!-- Circle ring -->
                     <div class="flex-shrink-0 text-center">
-                      <div class="relative w-16 h-16 mx-auto">
-                        <!-- SVG circle progress ring -->
+                      <div class="relative w-16 h-16">
                         <svg class="w-16 h-16 -rotate-90" viewBox="0 0 64 64">
-                          <!-- Track ring -->
-                          <circle cx="32" cy="32" r="26" fill="none" stroke="#e2e8f0" stroke-width="6"/>
-                          <!-- Filled ring — stroke-dasharray controls how much of the circle is filled.
-                               Circumference of radius-26 circle = 2π×26 ≈ 163.4
-                               Fill amount = score × 163.4 -->
+                          <circle cx="32" cy="32" r="26" fill="none" stroke="#f3f4f6" stroke-width="6"/>
                           <circle cx="32" cy="32" r="26" fill="none"
                             :stroke="qualityColor(draft.quality_score)"
                             stroke-width="6"
                             stroke-linecap="round"
                             :stroke-dasharray="`${(draft.quality_score * 163.4).toFixed(1)} 163.4`"/>
                         </svg>
-                        <!-- Score number in the centre -->
                         <div class="absolute inset-0 flex items-center justify-center">
-                          <span class="text-sm font-bold text-slate-800"
+                          <span class="text-sm font-extrabold text-gray-900"
                             x-text="Math.round(draft.quality_score * 100) + '%'"></span>
                         </div>
                       </div>
-                      <div class="text-xs text-slate-500 mt-1 font-medium">Quality</div>
+                      <div class="text-xs text-gray-400 mt-1 font-medium">Overall</div>
                     </div>
 
-                    <!-- Dimension breakdown bars -->
-                    <div class="flex-1 min-w-0 space-y-2.5" x-show="draft.quality_breakdown">
+                    <!-- Dimension bars -->
+                    <div class="flex-1 min-w-0 space-y-3" x-show="draft.quality_breakdown">
                       <template x-for="[dim, score] in qualityDimensions(draft.quality_breakdown)" :key="dim">
                         <div>
                           <div class="flex items-center justify-between mb-1">
-                            <span class="text-xs font-medium text-slate-600 capitalize"
+                            <span class="text-xs font-semibold text-gray-500 capitalize"
                               x-text="dim.replace('_', ' ')"></span>
-                            <span class="text-xs font-semibold"
-                              :class="score >= 0.8 ? 'text-green-700' : score >= 0.6 ? 'text-yellow-700' : 'text-red-700'"
+                            <span class="text-xs font-bold"
+                              :class="score >= 0.8 ? 'text-green-600' : score >= 0.6 ? 'text-amber-600' : 'text-jnj-red'"
                               x-text="Math.round(score * 100) + '%'"></span>
                           </div>
-                          <!-- Progress bar track -->
-                          <div class="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                            <!-- Progress bar fill — width is set as inline style because
-                                 Tailwind purges dynamic class names at build time.
-                                 Using inline style for computed widths is the correct pattern. -->
+                          <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                             <div class="h-full rounded-full transition-all duration-500"
                               :style="`width: ${Math.round(score * 100)}%`"
-                              :class="score >= 0.8 ? 'bg-green-500' : score >= 0.6 ? 'bg-yellow-400' : 'bg-red-500'">
+                              :class="score >= 0.8 ? 'bg-green-500' : score >= 0.6 ? 'bg-amber-400' : 'bg-jnj-red'">
                             </div>
                           </div>
                         </div>
@@ -645,21 +690,22 @@
                 </div>
               </template>
 
-              <!-- Report text — formatted with bold section headers -->
-              <div class="bg-white border border-slate-200 rounded-xl p-6">
-                <div class="report-body text-sm leading-relaxed"
-                  x-html="formatReport(draft.draft_text)">
-                </div>
+              <!-- Report text -->
+              <div class="bg-white rounded-2xl shadow-sm p-7">
+                <div class="report-body" x-html="formatReport(draft.draft_text)"></div>
               </div>
 
               <!-- Structured fields (collapsible) -->
               <template x-if="draft.structured_json">
-                <details class="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                  <summary class="px-5 py-3 text-sm font-medium text-slate-600 cursor-pointer hover:bg-slate-50 select-none">
-                    Extracted JSON Fields
-                    <span class="text-slate-400 font-normal ml-1">— raw output from the EXTRACT stage</span>
+                <details class="bg-white rounded-2xl shadow-sm overflow-hidden">
+                  <summary class="px-6 py-4 text-sm font-semibold text-gray-500 cursor-pointer hover:bg-gray-50 select-none flex items-center gap-2">
+                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                    </svg>
+                    Extracted Fields
+                    <span class="text-gray-300 font-normal ml-1">— raw EXTRACT stage output</span>
                   </summary>
-                  <pre class="px-5 pb-4 text-xs text-slate-600 overflow-x-auto leading-relaxed"
+                  <pre class="px-6 pb-5 pt-1 text-xs text-gray-500 overflow-x-auto leading-relaxed border-t border-gray-50"
                     x-text="JSON.stringify(draft.structured_json, null, 2)">
                   </pre>
                 </details>
@@ -667,67 +713,58 @@
 
             </div>
           </template>
-
         </div><!-- /report tab -->
 
 
-        <!-- ================================================================
+        <!-- ============================================================
              TAB: AUDIT TRAIL
-             Every stage of the pipeline writes one event row to agent_events.
-             Showing it as a timeline helps radiologists and engineers
-             understand exactly what the AI did and how long each step took.
-             ================================================================ -->
-        <div x-show="currentTab === 'events'" class="space-y-3">
+             ============================================================ -->
+        <div x-show="currentTab === 'events'" class="space-y-4">
 
+          <!-- Loading skeleton -->
           <div x-show="eventsLoading" class="animate-pulse space-y-3">
             <template x-for="i in 6">
-              <div class="bg-white border border-slate-200 rounded-xl p-4 flex gap-3">
-                <div class="w-8 h-8 bg-slate-200 rounded-full flex-shrink-0"></div>
+              <div class="bg-white rounded-xl shadow-sm p-4 flex gap-3">
+                <div class="w-8 h-8 bg-gray-200 rounded-full flex-shrink-0"></div>
                 <div class="flex-1 space-y-2 pt-1">
-                  <div class="w-24 h-3 bg-slate-200 rounded"></div>
-                  <div class="w-full h-3 bg-slate-100 rounded"></div>
+                  <div class="w-24 h-3 bg-gray-200 rounded"></div>
+                  <div class="w-full h-3 bg-gray-100 rounded"></div>
                 </div>
               </div>
             </template>
           </div>
 
-          <!-- Empty events -->
+          <!-- Empty -->
           <div x-show="!eventsLoading && events.length === 0"
-            class="bg-white border border-slate-200 rounded-xl p-8 text-center">
-            <p class="text-slate-400 text-sm">No pipeline events yet. Run the pipeline first.</p>
+            class="bg-white rounded-2xl shadow-sm p-10 text-center">
+            <p class="text-sm text-gray-300">No pipeline events yet. Run the pipeline first.</p>
           </div>
 
-          <!-- Event timeline -->
+          <!-- Timeline -->
           <div x-show="!eventsLoading && events.length > 0" class="relative">
-
-            <!-- Vertical line connecting events -->
-            <div class="absolute left-5 top-4 bottom-4 w-px bg-slate-200"></div>
+            <div class="absolute left-5 top-5 bottom-5 w-px bg-red-100"></div>
 
             <div class="space-y-3">
               <template x-for="(event, index) in events" :key="event.event_id">
-                <div class="bg-white border border-slate-200 rounded-xl p-4 flex gap-3 relative">
-
-                  <!-- Step icon / number circle -->
-                  <div class="w-8 h-8 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 z-10">
+                <div class="bg-white rounded-xl shadow-sm p-4 flex gap-3 relative">
+                  <!-- Step number circle with J&J red -->
+                  <div class="w-8 h-8 bg-jnj-red text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 z-10">
                     <span x-text="index + 1"></span>
                   </div>
-
-                  <!-- Event details -->
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2 mb-0.5 flex-wrap">
-                      <span class="text-sm font-semibold text-slate-800" x-text="event.step"></span>
+                      <span class="text-sm font-bold text-gray-800" x-text="event.step"></span>
                       <template x-if="event.tool_name">
-                        <span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-mono"
+                        <span class="text-xs bg-red-50 text-jnj-red px-2 py-0.5 rounded font-mono"
                           x-text="event.tool_name"></span>
                       </template>
                       <template x-if="event.latency_ms">
-                        <span class="text-xs text-slate-400 ml-auto" x-text="event.latency_ms + ' ms'"></span>
+                        <span class="text-xs text-gray-300 ml-auto" x-text="event.latency_ms + ' ms'"></span>
                       </template>
                     </div>
-                    <p class="text-xs text-slate-500 truncate" x-text="event.output_summary || '—'"></p>
-                    <p class="text-xs text-slate-400 mt-0.5" x-text="formatDateTime(event.created_at)"></p>
+                    <p class="text-xs text-gray-400 truncate" x-text="event.output_summary || '—'"></p>
+                    <p class="text-xs text-gray-300 mt-0.5" x-text="formatDateTime(event.created_at)"></p>
                   </div>
-
                 </div>
               </template>
             </div>
@@ -739,82 +776,67 @@
     </div><!-- /study view -->
 
 
-  </main><!-- /main -->
+  </main>
 
 
   <!-- =====================================================================
        MODAL: CREATE STUDY
-       A modal is like a dialog box that floats over the rest of the page.
-       Clicking the dark backdrop (outside the card) closes it.
-       Alpine's @click.self means "only fire if THIS element was clicked,
-       not a child inside it" — prevents the modal from closing when you
-       click inside the form.
-       
-       IMPROVEMENT: Added role="dialog" so screen readers recognize this
-       as a modal dialog. aria-labelledby links to the modal title so
-       readers know what the dialog is about.
        ===================================================================== -->
   <div
     x-show="showCreateModal"
     @click.self="showCreateModal = false"
-    class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+    @keydown.escape.window="showCreateModal = false"
+    class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
     style="display:none">
 
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
-         role="dialog"
-         aria-modal="true"
-         aria-labelledby="create-modal-title">
+    <div class="modal-enter bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div class="h-1.5 bg-jnj-red rounded-t-2xl"></div>
 
-      <!-- Modal header -->
-      <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
-        <h2 id="create-modal-title" class="text-lg font-bold text-slate-900">New Study</h2>
-        <button @click="showCreateModal = false"
-                aria-label="Close dialog"
-                class="text-slate-400 hover:text-slate-600 transition-colors">
+      <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+        <h2 class="text-lg font-extrabold text-gray-900">New Study</h2>
+        <button @click="showCreateModal = false" class="text-gray-300 hover:text-gray-500 transition-colors p-1">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
         </button>
       </div>
 
-      <!-- Modal form -->
       <form @submit.prevent="createStudy()" class="px-6 py-5 space-y-5">
-
         <!-- Patient section -->
         <div>
-          <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Patient</h3>
+          <h3 class="text-xs font-bold text-gray-300 uppercase tracking-widest mb-3">Patient</h3>
           <div class="grid grid-cols-2 gap-3">
             <div class="col-span-2">
-              <label class="block text-xs font-medium text-slate-600 mb-1">MRN *</label>
+              <label class="block text-xs font-semibold text-gray-500 mb-1">MRN *</label>
               <input x-model="createForm.patient.mrn" required placeholder="e.g. MRN-10042"
-                class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono placeholder:font-sans placeholder:text-slate-300">
+                class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 font-mono placeholder:font-sans placeholder:text-gray-300">
             </div>
             <div>
-              <label class="block text-xs font-medium text-slate-600 mb-1">First Name *</label>
+              <label class="block text-xs font-semibold text-gray-500 mb-1">First Name *</label>
               <input x-model="createForm.patient.first_name" required placeholder="Jane"
-                class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-300">
+                class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 placeholder:text-gray-300">
             </div>
             <div>
-              <label class="block text-xs font-medium text-slate-600 mb-1">Last Name *</label>
+              <label class="block text-xs font-semibold text-gray-500 mb-1">Last Name *</label>
               <input x-model="createForm.patient.last_name" required placeholder="Smith"
-                class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-300">
+                class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 placeholder:text-gray-300">
             </div>
             <div class="col-span-2">
-              <label class="block text-xs font-medium text-slate-600 mb-1">Date of Birth *</label>
+              <label class="block text-xs font-semibold text-gray-500 mb-1">Date of Birth *</label>
               <input type="date" x-model="createForm.patient.date_of_birth" required
-                class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2">
             </div>
           </div>
         </div>
 
         <!-- Study section -->
         <div>
-          <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Study</h3>
+          <h3 class="text-xs font-bold text-gray-300 uppercase tracking-widest mb-3">Study</h3>
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs font-medium text-slate-600 mb-1">Modality *</label>
+              <label class="block text-xs font-semibold text-gray-500 mb-1">Modality *</label>
               <select x-model="createForm.modality" required
-                class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white">
                 <option>CT</option>
                 <option>MRI</option>
                 <option>X-Ray</option>
@@ -825,33 +847,33 @@
               </select>
             </div>
             <div>
-              <label class="block text-xs font-medium text-slate-600 mb-1">Study Date *</label>
+              <label class="block text-xs font-semibold text-gray-500 mb-1">Study Date *</label>
               <input type="date" x-model="createForm.study_date" required
-                class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2">
             </div>
             <div class="col-span-2">
-              <label class="block text-xs font-medium text-slate-600 mb-1">Institution <span class="text-slate-400 font-normal">(optional)</span></label>
+              <label class="block text-xs font-semibold text-gray-500 mb-1">
+                Institution <span class="text-gray-300 font-normal">(optional)</span>
+              </label>
               <input x-model="createForm.institution" placeholder="e.g. Mass General Hospital"
-                class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-300">
+                class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 placeholder:text-gray-300">
             </div>
           </div>
         </div>
 
-        <!-- Error message -->
         <template x-if="createError">
-          <div class="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700"
+          <div class="bg-jnj-redLight border border-red-200 rounded-lg px-3 py-2.5 text-sm text-jnj-red font-medium"
             x-text="createError">
           </div>
         </template>
 
-        <!-- Submit -->
         <div class="flex justify-end gap-2 pt-1">
           <button type="button" @click="showCreateModal = false"
-            class="text-slate-600 hover:text-slate-800 text-sm font-medium px-4 py-2 rounded-lg hover:bg-slate-100 transition-colors">
+            class="text-gray-400 hover:text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors">
             Cancel
           </button>
           <button type="submit" :disabled="createLoading"
-            class="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+            class="flex items-center gap-1.5 bg-jnj-red hover:bg-jnj-redDark disabled:opacity-50 text-white text-sm font-semibold px-5 py-2 rounded transition-colors">
             <svg x-show="createLoading" class="spinner w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
@@ -866,37 +888,32 @@
 
   <!-- =====================================================================
        MODAL: APPROVE DRAFT
-       
-       IMPROVEMENT: Added role="dialog" and aria-labelledby so screen
-       readers understand this is a modal about approving.
        ===================================================================== -->
   <div
     x-show="showApproveModal"
     @click.self="showApproveModal = false"
-    class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+    @keydown.escape.window="showApproveModal = false"
+    class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
     style="display:none">
-
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm"
-         role="dialog"
-         aria-modal="true"
-         aria-labelledby="approve-modal-title">
-      <div class="px-6 py-4 border-b border-slate-200">
-        <h2 id="approve-modal-title" class="text-lg font-bold text-slate-900">Approve Report</h2>
-        <p class="text-sm text-slate-500 mt-1">This marks the report as final and ready for the patient record.</p>
+    <div class="modal-enter bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+      <div class="h-1.5 bg-green-500"></div>
+      <div class="px-6 py-4 border-b border-gray-100">
+        <h2 class="text-lg font-extrabold text-gray-900">Approve Report</h2>
+        <p class="text-sm text-gray-400 mt-1">This marks the report as final and ready for the patient record.</p>
       </div>
       <form @submit.prevent="approveDraft()" class="px-6 py-5 space-y-4">
         <div>
-          <label class="block text-xs font-medium text-slate-600 mb-1">Your Name / ID *</label>
+          <label class="block text-xs font-semibold text-gray-500 mb-1">Your Name / ID *</label>
           <input x-model="approveForm.actioned_by" required placeholder="e.g. Dr. Sarah Chen"
-            class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 placeholder:text-slate-300">
+            class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 placeholder:text-gray-300">
         </div>
         <div class="flex justify-end gap-2">
           <button type="button" @click="showApproveModal = false"
-            class="text-slate-600 text-sm font-medium px-4 py-2 rounded-lg hover:bg-slate-100 transition-colors">
+            class="text-gray-400 hover:text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors">
             Cancel
           </button>
           <button type="submit" :disabled="signOffLoading"
-            class="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+            class="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-semibold px-5 py-2 rounded transition-colors">
             <svg x-show="signOffLoading" class="spinner w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
@@ -911,44 +928,39 @@
 
   <!-- =====================================================================
        MODAL: REJECT DRAFT
-       
-       IMPROVEMENT: Added role="dialog" and aria-labelledby so screen
-       readers understand this is a modal about rejecting.
        ===================================================================== -->
   <div
     x-show="showRejectModal"
     @click.self="showRejectModal = false"
-    class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+    @keydown.escape.window="showRejectModal = false"
+    class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
     style="display:none">
-
-    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm"
-         role="dialog"
-         aria-modal="true"
-         aria-labelledby="reject-modal-title">
-      <div class="px-6 py-4 border-b border-slate-200">
-        <h2 id="reject-modal-title" class="text-lg font-bold text-slate-900">Reject Report</h2>
-        <p class="text-sm text-slate-500 mt-1">Explain what needs to be fixed so it can be regenerated.</p>
+    <div class="modal-enter bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+      <div class="h-1.5 bg-jnj-red"></div>
+      <div class="px-6 py-4 border-b border-gray-100">
+        <h2 class="text-lg font-extrabold text-gray-900">Reject Report</h2>
+        <p class="text-sm text-gray-400 mt-1">Explain what needs to be fixed so it can be regenerated.</p>
       </div>
       <form @submit.prevent="rejectDraft()" class="px-6 py-5 space-y-4">
         <div>
-          <label class="block text-xs font-medium text-slate-600 mb-1">Your Name / ID *</label>
+          <label class="block text-xs font-semibold text-gray-500 mb-1">Your Name / ID *</label>
           <input x-model="rejectForm.actioned_by" required placeholder="e.g. Dr. Sarah Chen"
-            class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500 placeholder:text-slate-300">
+            class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 placeholder:text-gray-300">
         </div>
         <div>
-          <label class="block text-xs font-medium text-slate-600 mb-1">Reason *</label>
+          <label class="block text-xs font-semibold text-gray-500 mb-1">Reason *</label>
           <textarea x-model="rejectForm.rejection_reason" required rows="3"
             placeholder="e.g. Laterality is incorrect — report says left but scan is right-sided."
-            class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-red-500 placeholder:text-slate-300">
+            class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none placeholder:text-gray-300">
           </textarea>
         </div>
         <div class="flex justify-end gap-2">
           <button type="button" @click="showRejectModal = false"
-            class="text-slate-600 text-sm font-medium px-4 py-2 rounded-lg hover:bg-slate-100 transition-colors">
+            class="text-gray-400 hover:text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors">
             Cancel
           </button>
           <button type="submit" :disabled="signOffLoading"
-            class="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+            class="flex items-center gap-1.5 bg-jnj-red hover:bg-jnj-redDark disabled:opacity-50 text-white text-sm font-semibold px-5 py-2 rounded transition-colors">
             <svg x-show="signOffLoading" class="spinner w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
@@ -965,57 +977,31 @@
        ALPINE.JS APPLICATION LOGIC
        ===================================================================== -->
   <script>
-    // -------------------------------------------------------------------------
-    // FIX 5: Module-level constants — defined ONCE, never recreated.
-    //
-    // Before: modalityBadge() and statusBadge() built a fresh { key: value }
-    // object on EVERY call, which happens on every Alpine re-render (keypress,
-    // hover, anything). It's fast, but wasteful — like reprinting the whole
-    // dictionary every time you want to look up one word.
-    //
-    // After: the dictionaries live here at the module level. One allocation,
-    // shared forever. The helper functions just do a single lookup.
-    // -------------------------------------------------------------------------
     const MODALITY_COLORS = {
-      'CT':               'bg-blue-100 text-blue-800',
-      'MRI':              'bg-purple-100 text-purple-800',
-      'X-Ray':            'bg-orange-100 text-orange-800',
-      'Ultrasound':       'bg-cyan-100 text-cyan-800',
-      'PET':              'bg-pink-100 text-pink-800',
-      'Fluoroscopy':      'bg-lime-100 text-lime-800',
-      'Nuclear Medicine': 'bg-teal-100 text-teal-800',
+      'CT':               'bg-blue-100 text-blue-700',
+      'MRI':              'bg-purple-100 text-purple-700',
+      'X-Ray':            'bg-orange-100 text-orange-700',
+      'Ultrasound':       'bg-cyan-100 text-cyan-700',
+      'PET':              'bg-pink-100 text-pink-700',
+      'Fluoroscopy':      'bg-lime-100 text-lime-700',
+      'Nuclear Medicine': 'bg-teal-100 text-teal-700',
     };
 
     const STATUS_COLORS = {
-      'draft':    'bg-yellow-100 text-yellow-800',
-      'approved': 'bg-green-100 text-green-800',
-      'rejected': 'bg-red-100 text-red-800',
+      'draft':    'bg-amber-100 text-amber-700',
+      'approved': 'bg-green-100 text-green-700',
+      'rejected': 'bg-red-100 text-red-700',
     };
 
-    // FIX 6: Pre-compile the regex once.
-    // `new RegExp(...)` or a literal regex gets compiled into a search machine.
-    // Doing it inside formatReport() would recompile it on every report render.
     const REPORT_HEADER_RE = /^(TECHNIQUE:|CLINICAL HISTORY:|FINDINGS:|IMPRESSION:|RECOMMENDATIONS:)/gm;
 
-
     function radiologyApp() {
-      // -----------------------------------------------------------------------
-      // FIX 2: Toast timer handle — a plain closure variable, NOT reactive.
-      //
-      // If we put _toastTimer inside the return {} object, Alpine would watch
-      // it for changes (it watches everything in that object). We don't want
-      // that — it's just a timer ID, not UI state.
-      //
-      // By declaring it here, it's a "closure variable": showToast() can see
-      // and modify it, but Alpine is completely unaware it exists.
-      // -----------------------------------------------------------------------
       let _toastTimer;
 
       return {
-
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
         // STATE
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
         view: 'studies',
         currentTab: 'dictation',
 
@@ -1057,70 +1043,66 @@
 
         toast: null,
 
-        // -----------------------------------------------------------------------
+        // Error modal — separate from toast because errors need acknowledgement
+        // title: short headline, message: plain-English explanation, detail: technical info
+        errorModal: null,
+
+        // ----------------------------------------------------------------
         // INIT
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
         async init() {
           await this.loadStudies();
         },
 
-        // -----------------------------------------------------------------------
-        // FIX 1: Shared fetch helper — the DRY principle in action.
-        //
-        // DRY = "Don't Repeat Yourself". The old code had this pattern 7 times:
-        //
-        //   const res = await fetch(url, opts);
-        //   if (!res.ok) {
-        //     const err = await res.json();
-        //     throw new Error(err.detail || `HTTP ${res.status}`);
-        //   }
-        //   return res.json();
-        //
-        // That's ~5 lines × 7 callers = 35 lines of identical boilerplate.
-        // Now it's one function. Every caller shrinks to: await this.apiFetch(...)
-        // If the error-parsing logic ever needs to change, there's ONE place to do it.
-        //
-        // IMPROVEMENT: Now it also categorizes errors so callers know if they
-        // should retry (server error), wait for network (network error), or tell
-        // the user to fix their input (client error).
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
+        // SHARED FETCH HELPER
+        // Throws on non-2xx. Automatically routes errors:
+        //   - "expected" errors (4xx) → showErrorModal with the API message
+        //   - network failures → showErrorModal with a friendly message
+        // Callers still get the exception so they can set their own loading
+        // flags in the finally block. They do NOT need to handle displaying
+        // the error — this helper does it.
+        // ----------------------------------------------------------------
         async apiFetch(url, options = {}) {
-          try {
-            const res = await fetch(url, options);
-            if (!res.ok) {
-              let msg = `HTTP ${res.status}`;
-              try { msg = (await res.json()).detail || msg; } catch { /* body wasn't JSON */ }
-              
-              // Categorize the error by HTTP status code
-              const error = new Error(msg);
-              error.type = res.status >= 500 ? 'server' : 'client';
-              error.status = res.status;
-              throw error;
-            }
-            return res.json();
-          } catch (e) {
-            // If it's not an HTTP error, it's a network error
-            if (!e.status) {
-              e.type = 'network';
-            }
-            throw e;
+          const res = await fetch(url, options);
+          if (!res.ok) {
+            let detail = `HTTP ${res.status}`;
+            let apiMessage = detail;
+            try {
+              const body = await res.json();
+              apiMessage = body.detail || detail;
+            } catch { /* body wasn't JSON */ }
+            throw new Error(apiMessage);
           }
+          return res.json();
         },
 
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
+        // ERROR MODAL
+        // Calling showError() pops up a blocking modal so the user cannot
+        // accidentally miss a failure and wonder why nothing happened.
+        // title   — short: "Pipeline Failed"
+        // message — plain English: "The safety check rejected the draft."
+        // detail  — optional technical info for debugging
+        // ----------------------------------------------------------------
+        showError(title, message, detail = null) {
+          this.errorModal = { title, message, detail };
+        },
+
+        // ----------------------------------------------------------------
         // NAVIGATION
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
         async goToStudies() {
           this.view = 'studies';
           this.currentStudy = null;
           this.draft = null;
           this.events = [];
-          await this.loadStudies();  // always refresh the list on the way back
+          await this.loadStudies();
         },
 
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
         // STUDIES LIST
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
         async loadStudies() {
           this.studiesLoading = true;
           this.studiesError = null;
@@ -1133,51 +1115,31 @@
           }
         },
 
-        // -----------------------------------------------------------------------
-        // FIX 3: Parallel fetches in selectStudy.
-        //
-        // Before: study fetch completed first, THEN draft + events started.
-        //   Timeline: ──study──► ──draft──►
-        //                        ──events──►
-        //   Total wait: study + max(draft, events)  ← 2 serial hops
-        //
-        // After: all three start at the same moment.
-        //   Timeline: ──study──►
-        //             ──draft──►
-        //             ──events──►
-        //   Total wait: max(study, draft, events)   ← 1 hop
-        //
-        // How: calling loadDraft() and loadEvents() WITHOUT await returns their
-        // Promises immediately and lets the fetches run in the background.
-        // We then await the study fetch. By the time that resolves, the other
-        // two are already partially (or fully) complete.
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
+        // STUDY DETAIL
+        // All three requests fire simultaneously — parallel fetching.
+        // ----------------------------------------------------------------
         async selectStudy(studyId) {
           this.view = 'study';
           this.currentTab = 'dictation';
           this.draft = null;
           this.events = [];
+          this.dictationText = '';
           this.dictationMessage = null;
           this.pipelineMessage = null;
           this.studyLoading = true;
 
-          // IMPROVEMENT: Load saved draft from localStorage (if any)
-          // If user was editing this study before, their text is still there!
-          this.dictationText = localStorage.getItem(`draft_${studyId}`) || '';
-
-          // Start draft and events immediately — they run in the background
           const draftPromise  = this.loadDraft(studyId);
           const eventsPromise = this.loadEvents(studyId);
 
           try {
             this.currentStudy = await this.apiFetch(`/api/v1/studies/${studyId}`);
           } catch (e) {
-            this.showToast('Failed to load study: ' + e.message, 'error');
+            this.showError('Study Load Failed', 'Could not load the study details.', e.message);
           } finally {
             this.studyLoading = false;
           }
 
-          // Wait for the other two to finish (they've been running the whole time)
           await Promise.all([draftPromise, eventsPromise]);
         },
 
@@ -1186,7 +1148,7 @@
           try {
             this.draft = await this.apiFetch(`/api/v1/studies/${studyId}/draft`);
           } catch {
-            this.draft = null;  // 404 = no draft yet, that's normal
+            this.draft = null;
           } finally {
             this.draftLoading = false;
           }
@@ -1203,17 +1165,9 @@
           }
         },
 
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
         // DICTATION
-        // -----------------------------------------------------------------------
-        saveDraftToStorage() {
-          // IMPROVEMENT: Auto-save the dictation to localStorage as user types.
-          // If they close the tab and come back, their work is still here!
-          if (this.currentStudy) {
-            localStorage.setItem(`draft_${this.currentStudy.study_id}`, this.dictationText);
-          }
-        },
-
+        // ----------------------------------------------------------------
         async submitDictation() {
           if (!this.dictationText.trim()) return;
           this.dictationSubmitting = true;
@@ -1227,30 +1181,21 @@
                 body: JSON.stringify({ transcript_text: this.dictationText }),
               }
             );
-            this.dictationMessage = { type: 'success', text: 'Dictation saved. Click "Run Pipeline" to generate the report.' };
+            this.dictationMessage = {
+              type: 'success',
+              text: 'Dictation saved. Click "Run Pipeline" to generate the report.',
+            };
             this.showToast('Dictation saved!');
-            // IMPROVEMENT: Clear localStorage once it's successfully saved to the server.
-            // No reason to keep it anymore!
-            localStorage.removeItem(`draft_${this.currentStudy.study_id}`);
           } catch (e) {
-            this.dictationMessage = { type: 'error', text: e.message };
+            this.showError('Dictation Failed', 'Could not save the dictation.', e.message);
           } finally {
             this.dictationSubmitting = false;
           }
         },
 
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
         // PIPELINE
-        // FIX 4: Removed the loadStudies() call here.
-        //
-        // Before: after running the pipeline, we refetched the entire studies
-        // list even though the user is looking at the study detail panel —
-        // the list isn't even visible. Wasted round-trip.
-        //
-        // After: we update currentStudy.latest_draft_status directly (one
-        // property assignment, instant). When the user navigates back via
-        // "All Studies", goToStudies() calls loadStudies() and gets fresh data.
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
         async runPipeline() {
           this.pipelineRunning = true;
           this.pipelineMessage = null;
@@ -1259,8 +1204,11 @@
               `/api/v1/studies/${this.currentStudy.study_id}/run`,
               { method: 'POST' }
             );
-            this.pipelineMessage = { type: 'success', text: `Report drafted (Draft #${data.draft_id}). Switch to the Report tab.` };
-            this.showToast('Report generated successfully!');
+            this.pipelineMessage = {
+              type: 'success',
+              text: `Report drafted (Draft #${data.draft_id}). Switching to the Report tab.`,
+            };
+            this.showToast('Report generated!');
 
             await Promise.all([
               this.loadDraft(this.currentStudy.study_id),
@@ -1269,15 +1217,19 @@
             this.currentStudy.latest_draft_status = 'draft';
             this.currentTab = 'report';
           } catch (e) {
-            this.pipelineMessage = { type: 'error', text: e.message };
+            this.showError(
+              'Pipeline Failed',
+              'The AI pipeline could not complete. Check the dictation is saved and try again.',
+              e.message
+            );
           } finally {
             this.pipelineRunning = false;
           }
         },
 
-        // -----------------------------------------------------------------------
-        // SIGN-OFF  (FIX 4 applies here too — loadStudies() calls removed)
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
+        // SIGN-OFF
+        // ----------------------------------------------------------------
         async approveDraft() {
           this.signOffLoading = true;
           try {
@@ -1292,9 +1244,9 @@
             this.currentStudy.latest_draft_status = 'approved';
             this.showApproveModal = false;
             this.approveForm = { actioned_by: '' };
-            this.showToast('Report approved!', 'success');
+            this.showToast('Report approved!');
           } catch (e) {
-            this.showToast(e.message, 'error');
+            this.showError('Approval Failed', 'Could not approve the report.', e.message);
           } finally {
             this.signOffLoading = false;
           }
@@ -1316,15 +1268,15 @@
             this.rejectForm = { actioned_by: '', rejection_reason: '' };
             this.showToast('Report rejected.', 'warning');
           } catch (e) {
-            this.showToast(e.message, 'error');
+            this.showError('Rejection Failed', 'Could not reject the report.', e.message);
           } finally {
             this.signOffLoading = false;
           }
         },
 
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
         // CREATE STUDY
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
         openCreateModal() {
           this.createError = null;
           this.createForm = {
@@ -1346,70 +1298,50 @@
               body: JSON.stringify(this.createForm),
             });
             this.showCreateModal = false;
-            this.showToast('Study created!', 'success');
+            this.showToast('Study created!');
             await this.loadStudies();
             await this.selectStudy(data.study_id);
           } catch (e) {
+            // Inline error in the modal form — user can correct and retry
             this.createError = e.message;
           } finally {
             this.createLoading = false;
           }
         },
 
-        // -----------------------------------------------------------------------
-        // FIX 2: Toast with timer leak fix.
-        //
-        // Before: every call to showToast() started a new 4-second timer without
-        // cancelling the previous one. If you got two toasts in quick succession:
-        //   t=0s  Toast A shown, timer A starts (fires at t=4)
-        //   t=1s  Toast B shown, timer B starts (fires at t=5)
-        //   t=4s  Timer A fires → sets toast=null, wiping Toast B after only 3s
-        //
-        // After: clearTimeout(_toastTimer) cancels any running timer before we
-        // start a new one. The _toastTimer variable lives in the closure (not
-        // in Alpine's reactive state) so Alpine doesn't needlessly track it.
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
+        // TOAST — confirmations only, not errors
+        // ----------------------------------------------------------------
         showToast(message, type = 'success') {
           clearTimeout(_toastTimer);
           this.toast = { message, type };
           _toastTimer = setTimeout(() => { this.toast = null; }, 4000);
         },
 
-        // -----------------------------------------------------------------------
+        // ----------------------------------------------------------------
         // DISPLAY HELPERS
-        // -----------------------------------------------------------------------
-
-        // Returns a hex color for the quality score ring based on the score value.
-        // Thresholds mirror clinical convention: green = good, amber = watch, red = act.
-        qualityColor(score) {
-          if (score >= 0.8) return '#22c55e';   // green-500
-          if (score >= 0.6) return '#eab308';   // yellow-500
-          return '#ef4444';                      // red-500
+        // ----------------------------------------------------------------
+        modalityBadge(modality) {
+          return MODALITY_COLORS[modality] || 'bg-gray-100 text-gray-500';
         },
 
-        // Converts the quality_breakdown dict into a sorted [name, score] pair array
-        // so x-for can iterate over it.
-        // JavaScript objects don't have a guaranteed order when you iterate them with
-        // for...in — Object.entries() gives a stable array we can control.
-        // We sort by score ascending so the weakest dimension appears at the top —
-        // the most actionable item is the first thing the radiologist sees.
+        statusBadge(status) {
+          return STATUS_COLORS[status] || 'bg-gray-100 text-gray-500';
+        },
+
+        qualityColor(score) {
+          if (score >= 0.8) return '#22c55e';
+          if (score >= 0.6) return '#f59e0b';
+          return '#CC0000';
+        },
+
         qualityDimensions(breakdown) {
           if (!breakdown) return [];
           return Object.entries(breakdown).sort((a, b) => a[1] - b[1]);
         },
 
-        // FIX 5: Just a lookup now — no object creation per call
-        modalityBadge(modality) {
-          return MODALITY_COLORS[modality] || 'bg-slate-100 text-slate-600';
-        },
-
-        statusBadge(status) {
-          return STATUS_COLORS[status] || 'bg-slate-100 text-slate-600';
-        },
-
         formatDate(d) {
           if (!d) return '—';
-          // Append T00:00 so the browser doesn't subtract the local timezone offset
           const str = String(d).includes('T') ? d : d + 'T00:00';
           return new Date(str).toLocaleDateString('en-US', {
             year: 'numeric', month: 'short', day: 'numeric',
@@ -1424,22 +1356,13 @@
           });
         },
 
-        // FIX 6: Simplified report formatter.
-        //
-        // Before: split the text into lines, wrap each in <p>, join back together.
-        //   That's ~5 lines of JS doing what CSS already knows how to do.
-        //
-        // After: just bold the section headers. The CSS rule
-        //   `.report-body { white-space: pre-line; }`
-        // tells the browser to treat newlines as real line breaks — no JS needed.
-        // The regex (REPORT_HEADER_RE) was pre-compiled at the top of this file.
         formatReport(text) {
           if (!text) return '';
           return text.replace(REPORT_HEADER_RE, '<strong>$1</strong>');
         },
 
-      }; // end return
-    } // end radiologyApp
+      };
+    }
   </script>
 
 </body>

@@ -29,6 +29,7 @@ os.environ["TEST_MODE"] = "1"
 os.environ["LLM_PROVIDER"] = "mock"
 os.environ["TRANSCRIPTION_PROVIDER"] = "mock"
 os.environ["AUDIO_UPLOAD_DIR"] = "/tmp/radiology_test_audio"
+os.environ["DICOM_UPLOAD_DIR"] = "/tmp/radiology_test_dicom"
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker

@@ -1,14 +1,19 @@
 """
-Six-stage radiology report pipeline.
+Seven-stage radiology report pipeline.
 
 Stages
 ------
-1. TRANSCRIBE  – accept / normalise the raw transcript text
-2. RETRIEVE    – fetch study context and prior reports from the DB
-3. EXTRACT     – ask the LLM to pull structured fields from the transcript
-4. DRAFT       – ask the LLM to write the free-text report
-5. SAFETY      – ask the LLM (acting as reviewer) to approve the draft
-6. SAVE        – persist the draft and all audit events to the DB
+1. TRANSCRIBE     – accept / normalise the raw transcript text
+2. RETRIEVE       – fetch study context and prior reports from the DB
+3. ANALYZE_IMAGE  – (optional) analyse DICOM images via Claude vision API
+4. EXTRACT        – ask the LLM to pull structured fields from the transcript
+5. DRAFT          – ask the LLM to write the free-text report
+6. SAFETY         – ask the LLM (acting as reviewer) to approve the draft
+7. SAVE           – persist the draft and all audit events to the DB
+
+ANALYZE_IMAGE fires for every study but skips immediately (logs a "skip" event)
+when study.dicom_uri is None.  This keeps the event count predictable: you
+always get exactly 7 events regardless of whether a DICOM image was uploaded.
 """
 
 import json
@@ -18,9 +23,9 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
-from app.db.models import ReportInput, ReportDraft, AgentEvent, Study
+from app.db.models import ReportDraft, AgentEvent, Study
 from app.services.llm import LLMClient, get_llm_client
-from app.services.prompts import prompt_draft, prompt_extract, prompt_safety
+from app.services.prompts import prompt_analyze_image, prompt_draft, prompt_extract, prompt_safety
 
 log = get_logger(__name__)
 
@@ -40,6 +45,8 @@ class PipelineContext:
     safety_result: dict = field(default_factory=dict)
     draft_id: Optional[int] = None
     events: list[dict] = field(default_factory=list)
+    # DICOM image findings — populated by stage_analyze_image, consumed by stage_extract
+    image_findings: Optional[str] = None
     # Quality scoring — populated by stage_safety, persisted by stage_save
     quality_score: Optional[float] = None
     quality_breakdown: Optional[dict] = None
@@ -114,15 +121,60 @@ def stage_retrieve(ctx: PipelineContext, db: Session) -> PipelineContext:
     return ctx
 
 
+def stage_analyze_image(ctx: PipelineContext, db: Session, llm: LLMClient) -> PipelineContext:
+    """
+    Stage 3 — ANALYZE_IMAGE
+    If the study has a DICOM file attached, load it, apply two clinical windows
+    per representative slice, and ask Claude's vision API to describe what it sees.
+
+    Skips immediately (with a "skip" event) when study.dicom_uri is None so that
+    the total event count stays at 7 regardless of whether images were uploaded.
+    """
+    from app.core.config import settings
+    from app.services.dicom import DICOMProcessor
+
+    t0 = time.monotonic()
+
+    study = db.get(Study, ctx.study_id)
+    if study is None or not study.dicom_uri:
+        ctx.events.append(_event("ANALYZE_IMAGE", "skip", "No DICOM file attached — skipping image analysis", t0))
+        log.info("pipeline.analyze_image.skipped", study_id=ctx.study_id)
+        return ctx
+
+    proc = DICOMProcessor().load(study.dicom_uri)
+    metadata = proc.extract_metadata()
+    max_slices = getattr(settings, "dicom_max_slices_analyzed", 5)
+    slices = proc.get_representative_slices(max_slices=max_slices)
+
+    # Two windows per slice — lung and mediastinal — so Claude sees the same
+    # two views a radiologist toggles between on the workstation.
+    image_bytes_list = []
+    for idx in slices:
+        image_bytes_list.append(proc.to_png_bytes(idx, window_center=-600, window_width=1500))
+        image_bytes_list.append(proc.to_png_bytes(idx, window_center=40,   window_width=400))
+
+    raw = llm.vision_complete(prompt_analyze_image(metadata, len(slices)), image_bytes_list)
+
+    try:
+        result = json.loads(raw)
+        ctx.image_findings = result.get("visual_impression", "") + "\n" + "\n".join(result.get("visual_findings", []))
+    except json.JSONDecodeError:
+        ctx.image_findings = raw  # pass raw text through if JSON fails
+
+    ctx.events.append(_event("ANALYZE_IMAGE", "vision_complete", f"slices={len(slices)},windows=2", t0))
+    log.info("pipeline.analyze_image", study_id=ctx.study_id, slices=len(slices))
+    return ctx
+
+
 def stage_extract(ctx: PipelineContext, llm: LLMClient) -> PipelineContext:
     """
-    Stage 3 — EXTRACT
+    Stage 4 — EXTRACT
     Ask the LLM to pull structured fields (modality, laterality, findings…)
-    from the raw transcript.
+    from the raw transcript, optionally enriched with DICOM image findings.
     """
     t0 = time.monotonic()
 
-    raw = llm.complete(prompt_extract(ctx.transcript))
+    raw = llm.complete(prompt_extract(ctx.transcript, image_findings=ctx.image_findings))
 
     try:
         ctx.structured_fields = json.loads(raw)
@@ -253,12 +305,13 @@ def run_pipeline(study_id: int, transcript: str, db: Session) -> PipelineContext
     )
 
     stages = [
-        ("TRANSCRIBE", lambda: stage_transcribe(ctx)),
-        ("RETRIEVE", lambda: stage_retrieve(ctx, db)),
-        ("EXTRACT", lambda: stage_extract(ctx, llm)),
-        ("DRAFT", lambda: stage_draft(ctx, llm)),
-        ("SAFETY", lambda: stage_safety(ctx, llm)),
-        ("SAVE", lambda: stage_save(ctx, db)),
+        ("TRANSCRIBE",    lambda: stage_transcribe(ctx)),
+        ("RETRIEVE",      lambda: stage_retrieve(ctx, db)),
+        ("ANALYZE_IMAGE", lambda: stage_analyze_image(ctx, db, llm)),
+        ("EXTRACT",       lambda: stage_extract(ctx, llm)),
+        ("DRAFT",         lambda: stage_draft(ctx, llm)),
+        ("SAFETY",        lambda: stage_safety(ctx, llm)),
+        ("SAVE",          lambda: stage_save(ctx, db)),
     ]
 
     # IMPROVEMENT: Loop through stages and catch errors individually

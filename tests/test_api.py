@@ -187,10 +187,11 @@ def test_get_draft_before_pipeline_returns_404(client):
 # GET /studies/{id}/events
 # ---------------------------------------------------------------------------
 
-def test_get_events_returns_six_stages(client):
+def test_get_events_returns_seven_stages(client):
     """
     After running the pipeline, the events endpoint should return exactly
-    6 audit rows — one per pipeline stage.
+    7 audit rows — one per pipeline stage (ANALYZE_IMAGE logs a skip event
+    when no DICOM is attached, keeping the count predictable).
     """
     study = _create_study(client)
     _submit_transcript(client, study["study_id"])
@@ -200,9 +201,31 @@ def test_get_events_returns_six_stages(client):
     assert r.status_code == 200
     events = r.json()
 
-    assert len(events) == 6
+    assert len(events) == 7
     stage_names = [e["step"] for e in events]
-    assert stage_names == ["TRANSCRIBE", "RETRIEVE", "EXTRACT", "DRAFT", "SAFETY", "SAVE"]
+    assert stage_names == ["TRANSCRIBE", "RETRIEVE", "ANALYZE_IMAGE", "EXTRACT", "DRAFT", "SAFETY", "SAVE"]
+
+
+def test_upload_dicom_returns_201(client, tmp_path):
+    """
+    Uploading a DICOM file should return 201 and record the path in dicom_uri.
+    We send a dummy .dcm file — the endpoint only saves bytes and records the
+    path; it doesn't parse the DICOM until the pipeline runs.
+    """
+    study = _create_study(client)
+    fake_dcm = tmp_path / "test.dcm"
+    fake_dcm.write_bytes(b"DICM" + b"\x00" * 128)  # minimal valid-looking DICOM header
+
+    with open(fake_dcm, "rb") as f:
+        r = client.post(
+            f"/api/v1/studies/{study['study_id']}/dicom",
+            files={"dicom_file": ("test.dcm", f, "application/octet-stream")},
+        )
+    assert r.status_code == 201
+    data = r.json()
+    assert data["study_id"] == study["study_id"]
+    assert "dicom_uri" in data
+    assert data["dicom_uri"].endswith("test.dcm")
 
 
 def test_get_events_before_pipeline_returns_empty_list(client):
@@ -240,6 +263,6 @@ def test_full_flow(client):
     assert len(draft["draft_text"]) > 0
     assert draft["structured_json"]["modality"] == "CT"
 
-    # 5. Get events — all 6 stages logged
+    # 5. Get events — all 7 stages logged (ANALYZE_IMAGE logs skip event when no DICOM)
     events = client.get(f"/api/v1/studies/{study_id}/events").json()
-    assert len(events) == 6
+    assert len(events) == 7

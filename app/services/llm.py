@@ -2,7 +2,7 @@
 LLM service layer.
 
 LLMClient is the abstract interface. All pipeline code calls .complete()
-and never cares which provider is underneath.
+and .vision_complete() and never cares which provider is underneath.
 
 Providers
 ---------
@@ -10,6 +10,7 @@ MockLLMClient       – deterministic, no API key, used in dev and all tests
 AnthropicLLMClient  – Claude via the Anthropic SDK (LLM_PROVIDER=anthropic)
 """
 
+import base64
 import json
 from abc import ABC, abstractmethod
 
@@ -18,7 +19,7 @@ from app.core.config import settings
 
 class LLMClient(ABC):
     """
-    Abstract base: every provider must implement complete().
+    Abstract base: every provider must implement complete() and vision_complete().
 
     The `model` class attribute is used by the pipeline to record
     which model produced a given draft.  Subclasses should override it.
@@ -29,6 +30,15 @@ class LLMClient(ABC):
     @abstractmethod
     def complete(self, prompt: str) -> str:
         """Send a prompt, return the model's text response."""
+
+    @abstractmethod
+    def vision_complete(self, prompt: str, image_bytes_list: list) -> str:
+        """
+        Send a prompt alongside one or more images (PNG bytes), return text.
+
+        image_bytes_list: list of bytes objects, each a PNG-encoded image.
+        The images are sent as base64-encoded data in the request.
+        """
 
 
 class MockLLMClient(LLMClient):
@@ -88,6 +98,19 @@ class MockLLMClient(LLMClient):
             "  No acute cardiopulmonary process.\n"
         )
 
+    def vision_complete(self, prompt: str, image_bytes_list: list) -> str:
+        """Return canned image analysis JSON regardless of image content."""
+        return json.dumps({
+            "visual_findings": [
+                "Lungs appear clear bilaterally on lung window.",
+                "No pleural effusion or pneumothorax identified.",
+                "Heart size within normal limits on mediastinal window.",
+            ],
+            "visual_impression": "No acute findings identified on DICOM image review.",
+            "image_quality": "Diagnostic",
+            "windows_reviewed": ["lung", "mediastinal"],
+        })
+
 
 class AnthropicLLMClient(LLMClient):
     """
@@ -117,6 +140,34 @@ class AnthropicLLMClient(LLMClient):
             model=self.model,
             max_tokens=2048,
             messages=[{"role": "user", "content": prompt}],
+        )
+        return _strip_code_fences(message.content[0].text)
+
+    def vision_complete(self, prompt: str, image_bytes_list: list) -> str:
+        """
+        Send PNG images + prompt to Claude's vision API, return text.
+
+        Each item in image_bytes_list is base64-encoded and sent as an
+        image/png content block before the text prompt. Claude processes
+        all images in a single request — no N round-trips needed.
+        """
+        content = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": base64.standard_b64encode(img).decode(),
+                },
+            }
+            for img in image_bytes_list
+        ]
+        content.append({"type": "text", "text": prompt})
+
+        message = self._client.messages.create(
+            model=self.model,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": content}],
         )
         return _strip_code_fences(message.content[0].text)
 

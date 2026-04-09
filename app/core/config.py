@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     llm_provider: str = "mock"  # mock | anthropic
     transcription_provider: str = "mock"  # mock | openai
     audio_upload_dir: str = "/data/audio"
+    dicom_upload_dir: str = "/data/dicom"
+    dicom_max_slices_analyzed: int = 5
     log_level: str = "INFO"
 
     # API keys (only needed when the respective provider is active)

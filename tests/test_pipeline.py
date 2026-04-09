@@ -16,6 +16,7 @@ import pytest
 from app.agents.pipeline import (
     PipelineContext,
     run_pipeline,
+    stage_analyze_image,
     stage_draft,
     stage_extract,
     stage_retrieve,
@@ -147,6 +148,30 @@ def test_retrieve_loads_prior_reports(db):
 
 
 # ---------------------------------------------------------------------------
+# stage_analyze_image
+# ---------------------------------------------------------------------------
+
+def test_analyze_image_skips_when_no_dicom_uri(db):
+    """
+    When study.dicom_uri is None, ANALYZE_IMAGE must skip cleanly and log
+    a 'skip' event.  ctx.image_findings stays None so stage_extract gets
+    no image context — that is the correct degraded behaviour.
+    """
+    study_id = _seed_study(db)
+    ctx = _ctx(study_id=study_id)
+    llm = MockLLMClient()
+
+    result = stage_analyze_image(ctx, db, llm)
+
+    # image_findings is not populated — no DICOM was available
+    assert result.image_findings is None
+    # But an event was still logged (keeps event count predictable)
+    assert len(result.events) == 1
+    assert result.events[0]["step"] == "ANALYZE_IMAGE"
+    assert "skip" in result.events[0]["tool_name"]
+
+
+# ---------------------------------------------------------------------------
 # stage_extract
 # ---------------------------------------------------------------------------
 
@@ -161,6 +186,18 @@ def test_extract_returns_structured_fields():
     assert isinstance(result.structured_fields, dict)
     assert "modality" in result.structured_fields
     assert "findings" in result.structured_fields
+
+
+def test_prompt_extract_includes_image_findings_when_present():
+    """
+    When image_findings is set on the context, prompt_extract() should include
+    an IMAGE ANALYSIS FINDINGS section in the prompt so the LLM can reconcile
+    the dictation with what was actually seen on the images.
+    """
+    from app.services.prompts import prompt_extract
+    prompt = prompt_extract("CT chest normal.", image_findings="No pleural effusion on lung window.")
+    assert "IMAGE ANALYSIS FINDINGS" in prompt
+    assert "No pleural effusion" in prompt
 
 
 def test_extract_handles_invalid_json_gracefully():
@@ -279,8 +316,9 @@ def test_run_pipeline_end_to_end(db):
     # A draft was saved to the database
     assert ctx.draft_id is not None
 
-    # 6 events were recorded (one per stage)
-    assert len(ctx.events) == 6
+    # 7 events were recorded (one per stage, including ANALYZE_IMAGE skip)
+    assert len(ctx.events) == 7
+    assert ctx.events[2]["step"] == "ANALYZE_IMAGE"
 
     # The model name was captured
     assert ctx.model_name == "MockLLMClient"

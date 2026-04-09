@@ -38,6 +38,9 @@ class Study(Base):
     study_date: Mapped[datetime] = mapped_column(Date, nullable=False)
     modality: Mapped[str] = mapped_column(String(50), nullable=False)
     institution: Mapped[Optional[str]] = mapped_column(String(200))
+    # DICOM image path — None if no image was uploaded for this study.
+    # The pipeline's ANALYZE_IMAGE stage skips cleanly when this is None.
+    dicom_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     patient: Mapped["Patient"] = relationship(back_populates="studies")
