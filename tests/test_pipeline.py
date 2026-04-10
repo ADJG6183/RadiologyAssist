@@ -80,14 +80,19 @@ def test_transcribe_records_event():
     assert result.events[0]["step"] == "TRANSCRIBE"
 
 
-def test_transcribe_raises_on_empty_transcript():
+def test_transcribe_allows_empty_transcript():
     """
-    An empty transcript should raise ValueError immediately.
-    The pipeline can't generate a report from nothing.
+    An empty transcript is now allowed — the radiologist may be running the
+    pipeline from DICOM image analysis alone (no dictation recorded).
+    The API endpoint validates that at least one content source exists before
+    calling run_pipeline(), so stage_transcribe no longer needs to guard this.
+    The stage should complete cleanly and record a descriptive event summary.
     """
     ctx = _ctx(transcript="   ")
-    with pytest.raises(ValueError, match="empty"):
-        stage_transcribe(ctx)
+    result = stage_transcribe(ctx)
+    assert len(result.events) == 1
+    assert result.events[0]["step"] == "TRANSCRIBE"
+    assert result.transcript == ""   # whitespace collapsed to empty string
 
 
 # ---------------------------------------------------------------------------

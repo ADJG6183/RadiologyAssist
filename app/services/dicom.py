@@ -59,11 +59,46 @@ class DICOMProcessor:
     # ------------------------------------------------------------------
 
     def load(self, path: str) -> "DICOMProcessor":
-        """Load a DICOM file from the filesystem."""
-        import pydicom  # lazy import — only needed when actually processing DICOM
-        self._ds = pydicom.dcmread(path)
-        self._pixel_array = self._apply_modality_lut(self._ds.pixel_array)
+        """Load a DICOM file — metadata always, pixel data best-effort.
+
+        Standard read is tried first. This is what valid Kaggle / TCIA files
+        need — they have a proper DICOM header and force=True would actually
+        skip normal parsing and leave tags unpopulated.
+
+        force=True is only used as a fallback for legacy files missing the
+        128-byte preamble / 'DICM' magic prefix. When forced, we also patch
+        in a default TransferSyntaxUID so pydicom can attempt pixel decode.
+
+        Pixel decode is always best-effort — RT, SR, PR files have no pixel
+        data and some exporters strip it. _pixel_array stays None and the
+        pipeline falls back to metadata-only analysis.
+        """
+        import pydicom
+        from pydicom.uid import ImplicitVRLittleEndian
+        from pydicom.dataset import FileMetaDataset
+
+        try:
+            self._ds = pydicom.dcmread(path)
+        except Exception:
+            # File is missing DICOM header prefix — try forced read
+            self._ds = pydicom.dcmread(path, force=True)
+            # Ensure file_meta exists and has a TransferSyntaxUID
+            if not hasattr(self._ds, "file_meta") or self._ds.file_meta is None:
+                self._ds.file_meta = FileMetaDataset()
+            if not hasattr(self._ds.file_meta, "TransferSyntaxUID"):
+                self._ds.file_meta.TransferSyntaxUID = ImplicitVRLittleEndian
+
+        try:
+            self._pixel_array = self._apply_modality_lut(self._ds.pixel_array)
+        except Exception:
+            self._pixel_array = None
+
         return self
+
+    @property
+    def has_pixels(self) -> bool:
+        """True if pixel data was successfully decoded."""
+        return self._pixel_array is not None
 
     def load_from_dataset(self, ds) -> "DICOMProcessor":
         """

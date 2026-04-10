@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.core.logging import get_logger
 from app.db.models import ReportDraft, AgentEvent, Study
 from app.services.llm import LLMClient, get_llm_client
-from app.services.prompts import prompt_analyze_image, prompt_draft, prompt_extract, prompt_safety
+from app.services.prompts import prompt_analyze_image, prompt_analyze_metadata, prompt_draft, prompt_extract, prompt_safety
 
 log = get_logger(__name__)
 
@@ -64,10 +64,12 @@ def stage_transcribe(ctx: PipelineContext) -> PipelineContext:
     """
     t0 = time.monotonic()
     cleaned = " ".join(ctx.transcript.split())
-    if not cleaned:
-        raise ValueError("Transcript is empty — cannot run pipeline.")
+    # Empty transcript is allowed when DICOM image findings will provide
+    # the clinical content (set in stage_analyze_image).  The API endpoint
+    # already validated that at least one source exists before calling us.
     ctx.transcript = cleaned
-    ctx.events.append(_event("TRANSCRIBE", "normalise", f"Cleaned transcript, {len(cleaned)} chars", t0))
+    summary = f"Cleaned transcript, {len(cleaned)} chars" if cleaned else "No dictation — image analysis only"
+    ctx.events.append(_event("TRANSCRIBE", "normalise", summary, t0))
     log.info("pipeline.transcribe", study_id=ctx.study_id, chars=len(cleaned))
     return ctx
 
@@ -141,28 +143,55 @@ def stage_analyze_image(ctx: PipelineContext, db: Session, llm: LLMClient) -> Pi
         log.info("pipeline.analyze_image.skipped", study_id=ctx.study_id)
         return ctx
 
-    proc = DICOMProcessor().load(study.dicom_uri)
-    metadata = proc.extract_metadata()
-    max_slices = getattr(settings, "dicom_max_slices_analyzed", 5)
-    slices = proc.get_representative_slices(max_slices=max_slices)
-
-    # Two windows per slice — lung and mediastinal — so Claude sees the same
-    # two views a radiologist toggles between on the workstation.
-    image_bytes_list = []
-    for idx in slices:
-        image_bytes_list.append(proc.to_png_bytes(idx, window_center=-600, window_width=1500))
-        image_bytes_list.append(proc.to_png_bytes(idx, window_center=40,   window_width=400))
-
-    raw = llm.vision_complete(prompt_analyze_image(metadata, len(slices)), image_bytes_list)
+    # If the radiologist already ran /analyze before triggering /run,
+    # reuse those cached findings rather than calling the vision API again.
+    # This is the expected workflow: analyze → review → generate report.
+    if study.image_findings:
+        ctx.image_findings = study.image_findings
+        ctx.events.append(_event(
+            "ANALYZE_IMAGE", "cached",
+            f"Using pre-analyzed findings ({len(study.image_findings)} chars)", t0,
+        ))
+        log.info("pipeline.analyze_image.cached", study_id=ctx.study_id)
+        return ctx
 
     try:
-        result = json.loads(raw)
-        ctx.image_findings = result.get("visual_impression", "") + "\n" + "\n".join(result.get("visual_findings", []))
-    except json.JSONDecodeError:
-        ctx.image_findings = raw  # pass raw text through if JSON fails
+        proc = DICOMProcessor().load(study.dicom_uri)
+        metadata = proc.extract_metadata()
 
-    ctx.events.append(_event("ANALYZE_IMAGE", "vision_complete", f"slices={len(slices)},windows=2", t0))
-    log.info("pipeline.analyze_image", study_id=ctx.study_id, slices=len(slices))
+        if proc.has_pixels:
+            # Full path: window slices → send images to Claude vision API
+            max_slices = getattr(settings, "dicom_max_slices_analyzed", 5)
+            slices = proc.get_representative_slices(max_slices=max_slices)
+
+            image_bytes_list = []
+            for idx in slices:
+                image_bytes_list.append(proc.to_png_bytes(idx, window_center=-600, window_width=1500))
+                image_bytes_list.append(proc.to_png_bytes(idx, window_center=40,   window_width=400))
+
+            raw = llm.vision_complete(prompt_analyze_image(metadata, len(slices)), image_bytes_list)
+            tool = f"vision_complete,slices={len(slices)}"
+            log.info("pipeline.analyze_image", study_id=ctx.study_id, slices=len(slices))
+        else:
+            # Fallback: no pixel data — infer context from header tags alone
+            raw = llm.complete(prompt_analyze_metadata(metadata))
+            tool = "metadata_only"
+            log.info("pipeline.analyze_image.metadata_only", study_id=ctx.study_id)
+
+        try:
+            result = json.loads(raw)
+            impression = result.get("visual_impression", "")
+            findings = result.get("visual_findings", [])
+            ctx.image_findings = impression + ("\n" + "\n".join(findings) if findings else "")
+        except json.JSONDecodeError:
+            ctx.image_findings = raw
+
+        ctx.events.append(_event("ANALYZE_IMAGE", tool, f"pixels={proc.has_pixels}", t0))
+
+    except Exception as exc:
+        log.warning("pipeline.analyze_image.failed", study_id=ctx.study_id, error=str(exc))
+        ctx.events.append(_event("ANALYZE_IMAGE", "skip", f"DICOM read failed: {str(exc)[:120]}", t0))
+
     return ctx
 
 
@@ -264,6 +293,7 @@ def stage_save(ctx: PipelineContext, db: Session) -> PipelineContext:
         version="1.0",
         quality_score=ctx.quality_score,
         quality_breakdown=json.dumps(ctx.quality_breakdown) if ctx.quality_breakdown else None,
+        image_findings=ctx.image_findings,
     )
     db.add(draft)
     db.flush()  # get draft.draft_id without committing yet

@@ -72,6 +72,17 @@
       border-color: #CC0000;
       box-shadow: 0 0 0 3px rgba(204,0,0,0.12);
     }
+
+    /* Quality ring — animated fill when the card first appears */
+    .quality-ring {
+      transition: stroke-dasharray 0.75s cubic-bezier(0.34, 1.2, 0.64, 1);
+    }
+
+    /* DICOM drop zone highlight */
+    .dicom-zone-active {
+      border-color: #CC0000;
+      background-color: #fff0f0;
+    }
   </style>
 
   <script>
@@ -367,6 +378,14 @@
           <!-- J&J red top stripe -->
           <div class="h-1 bg-jnj-red"></div>
           <div class="px-6 py-5 flex items-start justify-between gap-4 flex-wrap">
+            <div class="flex items-start gap-4">
+
+              <!-- Patient initials avatar — color matches the modality badge family -->
+              <div class="flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center text-sm font-extrabold tracking-tight mt-0.5"
+                :class="avatarBg(currentStudy?.modality)"
+                x-text="patientInitials(currentStudy?.patient)">
+              </div>
+
             <div>
               <div class="flex items-center gap-2.5 mb-2">
                 <span :class="modalityBadge(currentStudy?.modality)"
@@ -397,7 +416,8 @@
                   </span>
                 </template>
               </div>
-            </div>
+            </div><!-- /patient info -->
+            </div><!-- /avatar + info row -->
             <div x-show="currentStudy?.latest_draft_status">
               <span :class="statusBadge(currentStudy?.latest_draft_status)"
                 class="text-sm font-semibold px-3 py-1 rounded-full capitalize"
@@ -412,7 +432,7 @@
           <button type="button" @click="currentTab = 'dictation'"
             :class="currentTab === 'dictation' ? 'tab-active font-semibold' : 'text-gray-400 hover:text-gray-700'"
             class="px-5 py-3 text-sm transition-colors -mb-px border-b-2 border-transparent">
-            Dictation
+            Workflow
           </button>
           <button type="button" @click="currentTab = 'report'"
             :class="currentTab === 'report' ? 'tab-active font-semibold' : 'text-gray-400 hover:text-gray-700'"
@@ -439,130 +459,227 @@
 
 
         <!-- ============================================================
-             TAB: DICTATION
+             TAB: WORKFLOW
+             Three-step workflow: analyze → review → generate report.
+             Dictation is supplementary, not required.
              ============================================================ -->
-        <div x-show="currentTab === 'dictation'" class="space-y-5">
+        <div x-show="currentTab === 'dictation'" class="space-y-4">
 
-          <!-- Instruction banner -->
+          <!-- Workflow instruction banner -->
           <div class="bg-jnj-redLight border border-red-100 rounded-xl px-5 py-3.5 flex items-start gap-3">
             <svg class="w-4 h-4 text-jnj-red flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
             </svg>
             <p class="text-sm text-red-800">
-              Type or paste the radiology dictation below, click <strong>Save Dictation</strong>,
-              then click <strong>Run Pipeline</strong> to generate the AI-assisted report.
+              <strong>Workflow:</strong> Upload a DICOM scan and analyze it, then optionally add clinical notes, then generate the report. A DICOM analysis <em>or</em> dictation is required — both together produce the best results.
             </p>
           </div>
 
-          <!-- Dictation input card -->
+
+          <!-- ── STEP 1: IMAGE ANALYSIS ── -->
+          <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+            <!-- Purple accent stripe — visually distinct from the red pipeline cards -->
+            <div class="h-1 bg-purple-400"></div>
+            <div class="px-6 py-5">
+
+              <!-- Step header -->
+              <div class="flex items-center gap-3 mb-4">
+                <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-extrabold flex-shrink-0"
+                  :class="imageFindings ? 'bg-purple-500 text-white' : 'bg-purple-100 text-purple-500'">
+                  1
+                </div>
+                <div>
+                  <h3 class="font-bold text-gray-900 text-sm">DICOM Image Analysis</h3>
+                  <p class="text-xs text-gray-400">Upload a scan, then click <strong>Analyze</strong> to get AI visual findings you can review before generating the report.</p>
+                </div>
+                <!-- Done badge -->
+                <template x-if="imageFindings">
+                  <span class="ml-auto flex items-center gap-1 text-xs font-semibold text-purple-600 bg-purple-50 px-2.5 py-1 rounded-full flex-shrink-0">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+                    </svg>
+                    Analyzed
+                  </span>
+                </template>
+              </div>
+
+              <!-- Confirmed upload badge -->
+              <template x-if="dicomFileName">
+                <div class="flex items-center gap-2 mb-3 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                  <svg class="w-3.5 h-3.5 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+                  </svg>
+                  <span class="text-xs text-green-700 font-medium truncate" x-text="dicomFileName"></span>
+                  <button type="button" @click="dicomFileName = null; imageFindings = null"
+                    class="ml-auto text-green-400 hover:text-green-600 text-xs transition-colors flex-shrink-0">
+                    Remove
+                  </button>
+                </div>
+              </template>
+
+              <!-- Drop zone -->
+              <div
+                @dragover.prevent="dicomDragOver = true"
+                @dragleave="dicomDragOver = false"
+                @drop.prevent="onDicomDrop($event); dicomDragOver = false"
+                :class="dicomDragOver ? 'dicom-zone-active' : 'border-gray-200 hover:border-purple-400'"
+                class="relative rounded-xl border-2 border-dashed transition-colors duration-150 mb-3">
+
+                <input type="file" id="dicom-input" accept=".dcm,application/dicom"
+                  class="sr-only" @change="onDicomSelected($event)">
+
+                <label for="dicom-input" class="flex flex-col items-center justify-center gap-2 py-5 cursor-pointer select-none">
+                  <svg class="w-7 h-7 transition-colors duration-150"
+                    :class="dicomDragOver ? 'text-purple-500' : 'text-gray-300'"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                      d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v8"/>
+                  </svg>
+                  <template x-if="!dicomFile">
+                    <span class="text-sm text-gray-400 text-center leading-snug">
+                      Drop a <span class="font-semibold text-gray-500">.dcm</span> file here<br>
+                      or <span class="text-purple-500 font-semibold">click to browse</span>
+                    </span>
+                  </template>
+                  <template x-if="dicomFile">
+                    <span class="text-sm font-semibold text-purple-500 truncate max-w-xs" x-text="dicomFile.name"></span>
+                  </template>
+                </label>
+              </div>
+
+              <!-- Upload + Analyze button row -->
+              <div class="flex items-center gap-2 justify-end">
+                <!-- Upload button — only visible when a new file is staged -->
+                <template x-if="dicomFile">
+                  <button type="button"
+                    @click="uploadDicom()"
+                    :disabled="dicomUploading"
+                    class="flex items-center gap-1.5 border border-gray-300 hover:border-gray-400 bg-white text-gray-600 disabled:opacity-40 disabled:cursor-not-allowed text-sm font-semibold px-4 py-2 rounded transition-colors">
+                    <svg x-show="dicomUploading" class="spinner w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                    </svg>
+                    <svg x-show="!dicomUploading" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                    </svg>
+                    <span x-text="dicomUploading ? 'Uploading…' : 'Upload'"></span>
+                  </button>
+                </template>
+
+                <!-- Analyze button — enabled once a DICOM has been uploaded -->
+                <button type="button"
+                  @click="analyzeDicom()"
+                  :disabled="imageAnalyzing || (!dicomFileName && !currentStudy?.dicom_uri)"
+                  class="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded transition-colors">
+                  <svg x-show="imageAnalyzing" class="spinner w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                  </svg>
+                  <svg x-show="!imageAnalyzing" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                  </svg>
+                  <span x-text="imageAnalyzing ? 'Analyzing…' : (imageFindings ? 'Re-analyze' : 'Analyze Image')"></span>
+                </button>
+              </div>
+
+              <!-- Findings panel — shown once analysis is complete -->
+              <template x-if="imageFindings">
+                <div class="mt-4 bg-purple-50 border border-purple-200 rounded-xl p-4">
+                  <div class="flex items-center gap-2 mb-2">
+                    <svg class="w-3.5 h-3.5 text-purple-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                    </svg>
+                    <span class="text-xs font-bold text-purple-600 uppercase tracking-widest">AI Visual Findings</span>
+                    <span class="ml-auto text-xs text-purple-400">Review before generating report</span>
+                  </div>
+                  <p class="text-sm text-purple-900 leading-relaxed whitespace-pre-line" x-text="imageFindings"></p>
+                </div>
+              </template>
+
+            </div>
+          </div>
+
+
+          <!-- ── STEP 2: CLINICAL NOTES (optional) ── -->
           <div class="bg-white rounded-2xl shadow-sm p-6">
-            <label class="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
-              Dictation Text
-            </label>
+            <div class="flex items-center gap-3 mb-4">
+              <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-extrabold flex-shrink-0"
+                :class="dictationText.trim() ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-400'">
+                2
+              </div>
+              <div>
+                <h3 class="font-bold text-gray-900 text-sm">
+                  Clinical Notes
+                  <span class="font-normal text-gray-300 ml-1">(optional)</span>
+                </h3>
+                <p class="text-xs text-gray-400">Add radiologist dictation or supplementary notes. Leave blank to generate from image analysis alone.</p>
+              </div>
+              <!-- Done badge -->
+              <template x-if="dictationMessage && dictationMessage.type === 'success'">
+                <span class="ml-auto flex items-center gap-1 text-xs font-semibold text-green-600 bg-green-50 px-2.5 py-1 rounded-full flex-shrink-0">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+                  </svg>
+                  Saved
+                </span>
+              </template>
+            </div>
+
             <textarea
               x-model="dictationText"
-              rows="6"
-              placeholder="e.g. CT chest without contrast. Lungs clear bilaterally. No pleural effusion. Heart size normal..."
+              rows="5"
+              placeholder="e.g. CT chest without contrast. Lungs clear bilaterally. No pleural effusion…"
               class="w-full text-sm text-gray-800 border border-gray-200 rounded-lg px-4 py-3 resize-none placeholder:text-gray-300 transition-colors">
             </textarea>
 
             <div class="flex items-center justify-between mt-3">
               <span class="text-xs text-gray-300" x-text="dictationText.length + ' characters'"></span>
-              <button
+              <button type="button"
                 @click="submitDictation()"
                 :disabled="!dictationText.trim() || dictationSubmitting"
-                class="flex items-center gap-2 bg-gray-800 hover:bg-gray-900 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded transition-colors">
+                class="flex items-center gap-2 bg-gray-700 hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded transition-colors">
                 <svg x-show="dictationSubmitting" class="spinner w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                   <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
                 </svg>
-                <span x-text="dictationSubmitting ? 'Saving…' : 'Save Dictation'"></span>
+                <span x-text="dictationSubmitting ? 'Saving…' : 'Save Notes'"></span>
               </button>
             </div>
           </div>
 
-          <!-- Inline success message after save -->
-          <template x-if="dictationMessage">
-            <div :class="dictationMessage.type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-jnj-red'"
-              class="border rounded-lg px-4 py-3 text-sm font-medium"
-              x-text="dictationMessage.text">
-            </div>
-          </template>
 
-          <!-- DICOM Upload card (optional — only needed for image-assisted reports) -->
+          <!-- ── STEP 3: GENERATE REPORT ── -->
           <div class="bg-white rounded-2xl shadow-sm p-6">
-            <div class="flex items-start gap-3 mb-4">
-              <svg class="w-4 h-4 text-jnj-red mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-              </svg>
+            <div class="flex items-center gap-3 mb-4">
+              <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-extrabold flex-shrink-0"
+                :class="(imageFindings || (dictationMessage && dictationMessage.type === 'success')) ? 'bg-jnj-red text-white' : 'bg-red-100 text-red-300'">
+                3
+              </div>
               <div>
-                <h3 class="font-bold text-gray-900 text-sm mb-0.5">DICOM Image
-                  <span class="font-normal text-gray-300">(optional)</span>
-                </h3>
+                <h3 class="font-bold text-gray-900 text-sm">Generate Report</h3>
                 <p class="text-xs text-gray-400 leading-relaxed">
-                  Upload a <span class="font-medium text-gray-500">.dcm</span> file to enable visual analysis.
-                  The pipeline will window the image slices and send them to Claude's vision API
-                  before extraction — the same two views a radiologist uses on a workstation.
+                  Runs the full AI pipeline:
+                  <span class="font-medium text-gray-500">Transcribe → Retrieve → Analyze → Extract → Draft → Safety → Save</span>
                 </p>
               </div>
             </div>
 
-            <!-- Confirmed upload badge -->
-            <template x-if="dicomFileName">
-              <div class="flex items-center gap-2 mb-3 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                <svg class="w-3.5 h-3.5 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+            <!-- Readiness hint — tells user what's still missing -->
+            <template x-if="!imageFindings && !(dictationMessage && dictationMessage.type === 'success')">
+              <div class="mb-4 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 flex items-center gap-2">
+                <svg class="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
                 </svg>
-                <span class="text-xs text-green-700 font-medium truncate" x-text="dicomFileName"></span>
-                <button type="button" @click="dicomFileName = null"
-                  class="ml-auto text-green-400 hover:text-green-600 text-xs transition-colors flex-shrink-0">
-                  Remove
-                </button>
+                <span class="text-xs text-amber-700">Complete Step 1 (analyze image) or Step 2 (save notes) first.</span>
               </div>
             </template>
 
-            <!-- File picker row -->
-            <div class="flex items-center gap-2">
-              <!-- Hidden real file input — triggered by the visible button -->
-              <input type="file" id="dicom-input" accept=".dcm,application/dicom"
-                class="sr-only"
-                @change="onDicomSelected($event)">
-
-              <label for="dicom-input"
-                class="flex items-center gap-1.5 text-sm font-medium text-gray-500 border border-gray-200 hover:border-jnj-red hover:text-jnj-red px-4 py-1.5 rounded-lg cursor-pointer transition-colors">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
-                </svg>
-                <span x-text="dicomFile ? dicomFile.name : 'Choose .dcm file'"></span>
-              </label>
-
+            <div class="flex items-center justify-between gap-4 flex-wrap">
               <button type="button"
-                @click="uploadDicom()"
-                :disabled="!dicomFile || dicomUploading"
-                class="flex items-center gap-1.5 bg-gray-800 hover:bg-gray-900 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-4 py-1.5 rounded transition-colors">
-                <svg x-show="dicomUploading" class="spinner w-3.5 h-3.5" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                </svg>
-                <span x-text="dicomUploading ? 'Uploading…' : 'Upload'"></span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Run Pipeline card -->
-          <div class="bg-white rounded-2xl shadow-sm p-6">
-            <div class="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <h3 class="font-bold text-gray-900 text-sm mb-1">Generate Report</h3>
-                <p class="text-xs text-gray-400 leading-relaxed">
-                  Runs the full AI pipeline:
-                  <span class="font-medium text-gray-500">Transcribe → Retrieve → Analyze Image → Extract → Draft → Safety → Save</span>
-                </p>
-              </div>
-              <button
                 @click="runPipeline()"
-                :disabled="pipelineRunning"
+                :disabled="pipelineRunning || (!imageFindings && !(dictationMessage && dictationMessage.type === 'success'))"
                 class="flex items-center gap-2 bg-jnj-red hover:bg-jnj-redDark disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold px-6 py-2.5 rounded transition-colors shadow-sm">
                 <svg x-show="pipelineRunning" class="spinner w-4 h-4" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -571,11 +688,31 @@
                 <svg x-show="!pipelineRunning" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                 </svg>
-                <span x-text="pipelineRunning ? 'Generating…' : 'Run Pipeline'"></span>
+                <span x-text="pipelineRunning ? 'Generating…' : 'Generate Report'"></span>
               </button>
+
+              <!-- What will be used — quick summary of inputs -->
+              <div class="flex items-center gap-2 text-xs text-gray-400 flex-wrap">
+                <template x-if="imageFindings">
+                  <span class="flex items-center gap-1 bg-purple-50 text-purple-600 font-semibold px-2 py-1 rounded">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                    Image analysis
+                  </span>
+                </template>
+                <template x-if="dictationMessage && dictationMessage.type === 'success'">
+                  <span class="flex items-center gap-1 bg-gray-100 text-gray-500 font-semibold px-2 py-1 rounded">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+                    </svg>
+                    Dictation
+                  </span>
+                </template>
+              </div>
             </div>
 
-            <!-- Stage progress bar (visual only) -->
+            <!-- Stage progress bar -->
             <template x-if="pipelineRunning">
               <div class="mt-5">
                 <div class="flex gap-1 mb-2">
@@ -594,14 +731,15 @@
               </div>
             </template>
 
-            <!-- Inline success after run -->
+            <!-- Success message -->
             <template x-if="pipelineMessage && pipelineMessage.type === 'success'">
               <div class="mt-4 bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-800 font-medium"
                 x-text="pipelineMessage.text">
               </div>
             </template>
           </div>
-        </div><!-- /dictation tab -->
+
+        </div><!-- /workflow tab -->
 
 
         <!-- ============================================================
@@ -618,7 +756,7 @@
                   d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
               </svg>
             </div>
-            <p class="text-sm text-gray-400">No report yet. Go to the <strong class="text-gray-700">Dictation</strong> tab and run the pipeline.</p>
+            <p class="text-sm text-gray-400">No report yet. Go to the <strong class="text-gray-700">Workflow</strong> tab, analyze the DICOM image or add notes, then generate the report.</p>
           </div>
 
           <!-- Draft loading skeleton -->
@@ -713,10 +851,11 @@
                         <svg class="w-16 h-16 -rotate-90" viewBox="0 0 64 64">
                           <circle cx="32" cy="32" r="26" fill="none" stroke="#f3f4f6" stroke-width="6"/>
                           <circle cx="32" cy="32" r="26" fill="none"
+                            class="quality-ring"
                             :stroke="qualityColor(draft.quality_score)"
                             stroke-width="6"
                             stroke-linecap="round"
-                            :stroke-dasharray="`${(draft.quality_score * 163.4).toFixed(1)} 163.4`"/>
+                            :stroke-dasharray="`${(qualityRingProgress * 163.4).toFixed(1)} 163.4`"/>
                         </svg>
                         <div class="absolute inset-0 flex items-center justify-center">
                           <span class="text-sm font-extrabold text-gray-900"
@@ -747,6 +886,26 @@
                       </template>
                     </div>
 
+                  </div>
+                </div>
+              </template>
+
+              <!-- Image Analysis Findings card — only shown when DICOM was analyzed -->
+              <template x-if="draft.image_findings">
+                <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+                  <div class="h-1 bg-purple-400"></div>
+                  <div class="px-6 py-4 border-b border-gray-50 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                    </svg>
+                    <span class="text-xs font-bold text-gray-400 uppercase tracking-widest">DICOM Image Analysis</span>
+                    <span class="ml-auto text-xs bg-purple-50 text-purple-600 font-semibold px-2 py-0.5 rounded">AI Vision</span>
+                  </div>
+                  <div class="px-6 py-4">
+                    <p class="text-sm text-gray-600 leading-relaxed whitespace-pre-line" x-text="draft.image_findings"></p>
                   </div>
                 </div>
               </template>
@@ -808,9 +967,12 @@
             <div class="space-y-3">
               <template x-for="(event, index) in events" :key="event.event_id">
                 <div class="bg-white rounded-xl shadow-sm p-4 flex gap-3 relative">
-                  <!-- Step number circle with J&J red -->
-                  <div class="w-8 h-8 bg-jnj-red text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 z-10">
-                    <span x-text="index + 1"></span>
+                  <!-- Stage icon circle — unique icon per pipeline step -->
+                  <div class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 z-10"
+                    :class="event.tool_name === 'skip' ? 'bg-gray-100 text-gray-400' : 'bg-jnj-red text-white'">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <g x-html="stageIcon(event.step)"></g>
+                    </svg>
                   </div>
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2 mb-0.5 flex-wrap">
@@ -1089,6 +1251,11 @@
         dicomFile: null,          // File object selected by the user
         dicomUploading: false,
         dicomFileName: null,      // filename confirmed uploaded to the server
+        dicomDragOver: false,     // true while a file is being dragged over the drop zone
+        imageAnalyzing: false,    // true while POST /analyze is running
+        imageFindings: null,      // findings text returned by /analyze (or pre-loaded from study)
+
+        qualityRingProgress: 0,   // animated from 0 → quality_score on load
 
         showCreateModal: false,
         createLoading: false,
@@ -1194,6 +1361,10 @@
           this.pipelineMessage = null;
           this.dicomFile = null;
           this.dicomFileName = null;
+          this.dicomDragOver = false;
+          this.imageAnalyzing = false;
+          this.imageFindings = null;
+          this.qualityRingProgress = 0;
           this.studyLoading = true;
 
           const draftPromise  = this.loadDraft(studyId);
@@ -1201,6 +1372,10 @@
 
           try {
             this.currentStudy = await this.apiFetch(`/api/v1/studies/${studyId}`);
+            // Pre-populate image findings if the study was already analyzed
+            if (this.currentStudy?.image_findings) {
+              this.imageFindings = this.currentStudy.image_findings;
+            }
           } catch (e) {
             this.showError('Study Load Failed', 'Could not load the study details.', e.message);
           } finally {
@@ -1212,8 +1387,15 @@
 
         async loadDraft(studyId) {
           this.draftLoading = true;
+          this.qualityRingProgress = 0;
           try {
             this.draft = await this.apiFetch(`/api/v1/studies/${studyId}/draft`);
+            // Animate the quality ring: start at 0, then set the real value
+            // after a short delay so the CSS transition fires after Alpine
+            // has mounted the quality card into the DOM.
+            if (this.draft?.quality_score != null) {
+              setTimeout(() => { this.qualityRingProgress = this.draft.quality_score; }, 80);
+            }
           } catch {
             this.draft = null;
           } finally {
@@ -1269,6 +1451,12 @@
           this.dicomFile = event.target.files[0] || null;
         },
 
+        onDicomDrop(event) {
+          // dataTransfer.files is a FileList — grab the first item
+          const file = event.dataTransfer?.files[0];
+          if (file) this.dicomFile = file;
+        },
+
         async uploadDicom() {
           if (!this.dicomFile) return;
           this.dicomUploading = true;
@@ -1291,11 +1479,35 @@
             const data = await res.json();
             this.dicomFileName = this.dicomFile.name;
             this.dicomFile = null;
-            this.showToast('DICOM file uploaded. It will be analyzed on the next pipeline run.');
+            this.showToast('DICOM uploaded. Click "Analyze Image" to review findings.');
           } catch (e) {
             this.showError('DICOM Upload Failed', 'Could not upload the DICOM file.', e.message);
           } finally {
             this.dicomUploading = false;
+          }
+        },
+
+        // ----------------------------------------------------------------
+        // DICOM ANALYZE
+        // Calls POST /analyze which runs the vision API and stores findings
+        // on the study.  Returns the findings text for immediate display so
+        // the radiologist can review before deciding to generate a report.
+        // ----------------------------------------------------------------
+        async analyzeDicom() {
+          this.imageAnalyzing = true;
+          try {
+            const data = await this.apiFetch(
+              `/api/v1/studies/${this.currentStudy.study_id}/analyze`,
+              { method: 'POST' }
+            );
+            this.imageFindings = data.image_findings;
+            this.currentStudy.image_findings = data.image_findings;
+            const sourceLabel = data.has_pixels ? 'Image analysis complete.' : 'Metadata analysis complete (no pixel data).';
+            this.showToast(sourceLabel);
+          } catch (e) {
+            this.showError('Analysis Failed', 'Could not analyze the DICOM image.', e.message);
+          } finally {
+            this.imageAnalyzing = false;
           }
         },
 
@@ -1433,6 +1645,44 @@
 
         statusBadge(status) {
           return STATUS_COLORS[status] || 'bg-gray-100 text-gray-500';
+        },
+
+        // Patient initials avatar — first char of first + last name
+        patientInitials(patient) {
+          if (!patient) return '?';
+          return (patient.first_name?.[0] || '').toUpperCase() +
+                 (patient.last_name?.[0]  || '').toUpperCase();
+        },
+
+        // Avatar background uses the same color family as the modality badge
+        // so a CT study always shows a blue avatar, MRI purple, etc.
+        avatarBg(modality) {
+          const map = {
+            'CT':               'bg-blue-100 text-blue-600',
+            'MRI':              'bg-purple-100 text-purple-600',
+            'X-Ray':            'bg-orange-100 text-orange-600',
+            'Ultrasound':       'bg-cyan-100 text-cyan-600',
+            'PET':              'bg-pink-100 text-pink-600',
+            'Fluoroscopy':      'bg-lime-100 text-lime-600',
+            'Nuclear Medicine': 'bg-teal-100 text-teal-600',
+          };
+          return map[modality] || 'bg-gray-100 text-gray-500';
+        },
+
+        // Returns the SVG path(s) for each pipeline stage icon.
+        // Injected into an SVG <g> via x-html — all modern browsers support
+        // SVG innerHTML, which is the SVG namespace equivalent of element.innerHTML.
+        stageIcon(step) {
+          const icons = {
+            'TRANSCRIBE':    `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>`,
+            'RETRIEVE':      `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/>`,
+            'ANALYZE_IMAGE': `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>`,
+            'EXTRACT':       `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>`,
+            'DRAFT':         `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>`,
+            'SAFETY':        `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>`,
+            'SAVE':          `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>`,
+          };
+          return icons[step] || `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>`;
         },
 
         qualityColor(score) {

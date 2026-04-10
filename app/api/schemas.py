@@ -114,6 +114,8 @@ class ReportDraftRead(BaseModel):
     # Quality scoring fields — None if the pipeline ran before this feature was added
     quality_score: Optional[float] = None
     quality_breakdown: Optional[Any] = None  # parsed from JSON string, like structured_json
+    # DICOM image analysis findings — None when no DICOM was uploaded
+    image_findings: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -142,6 +144,7 @@ class ReportDraftRead(BaseModel):
             rejection_reason=draft.rejection_reason,
             quality_score=draft.quality_score,
             quality_breakdown=parsed_qb,
+            image_findings=draft.image_findings,
         )
 
 
@@ -187,6 +190,13 @@ class StudyListItem(BaseModel):
     latest_draft_status: Optional[str] = None   # null if no draft yet
 
 
+class AnalyzeResult(BaseModel):
+    """Response from POST /studies/{id}/analyze."""
+    study_id: int
+    image_findings: str
+    has_pixels: bool    # True = real image analysis; False = metadata-only
+
+
 class StudyDetailRead(BaseModel):
     """Full study card shown in the detail panel."""
     study_id: int
@@ -196,3 +206,4 @@ class StudyDetailRead(BaseModel):
     created_at: datetime
     patient: PatientRead
     latest_draft_status: Optional[str] = None
+    image_findings: Optional[str] = None   # populated after /analyze is called

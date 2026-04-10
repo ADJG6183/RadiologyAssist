@@ -25,6 +25,7 @@ from sqlalchemy import select as sa_select
 
 from app.api.schemas import (
     AgentEventRead,
+    AnalyzeResult,
     ApproveIn,
     DictationJSON,
     PatientRead,
@@ -122,6 +123,7 @@ def get_study(study_id: int, db: Session = Depends(get_db)):
         created_at=study.created_at,
         patient=PatientRead.model_validate(study.patient),
         latest_draft_status=latest_draft.status if latest_draft else None,
+        image_findings=study.image_findings,
     )
 
 
@@ -298,7 +300,7 @@ def run_study_pipeline(study_id: int, db: Session = Depends(get_db)):
     Raises 422 if no transcript exists yet.
     Raises 500 if the safety check rejects the draft.
     """
-    _require_study(db, study_id)
+    study = _require_study(db, study_id)
 
     # Block re-run if the study already has an approved draft.
     # An approved report is final — the radiologist must reject it first
@@ -315,7 +317,8 @@ def run_study_pipeline(study_id: int, db: Session = Depends(get_db)):
             detail="This study already has an approved report. Reject it first to generate a new draft.",
         )
 
-    # Grab the latest transcript for this study
+    # Grab the latest transcript for this study (may be None — that's OK if
+    # the study has pre-analyzed DICOM image findings to work from).
     latest_input = (
         db.query(ReportInput)
         .filter(ReportInput.study_id == study_id)
@@ -323,14 +326,20 @@ def run_study_pipeline(study_id: int, db: Session = Depends(get_db)):
         .order_by(ReportInput.created_at.desc())
         .first()
     )
-    if latest_input is None:
+
+    # At least one content source is required: dictation OR image analysis.
+    # An empty-transcript pipeline with no image findings would produce
+    # a report with no clinical information — catch that early.
+    if latest_input is None and not study.image_findings:
         raise HTTPException(
             status_code=422,
-            detail="No transcript found for this study. Submit a dictation first.",
+            detail="No content found. Analyze a DICOM image or submit a dictation first.",
         )
 
+    transcript = latest_input.transcript_text if latest_input else ""
+
     try:
-        ctx = run_pipeline(study_id, latest_input.transcript_text, db)
+        ctx = run_pipeline(study_id, transcript, db)
     except ValueError as exc:
         # Pipeline raises ValueError for safety failures and validation errors.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -487,6 +496,84 @@ def upload_dicom(
 
     log.info("api.dicom_uploaded", study_id=study_id, path=dest)
     return {"study_id": study_id, "dicom_uri": dest}
+
+
+# ---------------------------------------------------------------------------
+# POST /studies/{study_id}/analyze
+# Run DICOM image analysis standalone — stores findings on study.image_findings
+# so the radiologist can review them before deciding to generate a report.
+# The pipeline's ANALYZE_IMAGE stage will re-use these cached findings
+# rather than re-running the (expensive) vision API call.
+# ---------------------------------------------------------------------------
+
+@router.post("/studies/{study_id}/analyze", response_model=AnalyzeResult)
+def analyze_dicom(study_id: int, db: Session = Depends(get_db)):
+    """
+    Analyze the uploaded DICOM file and return visual findings.
+
+    Runs DICOMProcessor → windowed PNGs → Claude vision API (or metadata-only
+    fallback when pixels are unavailable) and stores the result in
+    study.image_findings.  Calling this again overwrites the previous result.
+
+    Returns the findings text and whether real pixel data was used so the UI
+    can tell the user whether they got a full image read or metadata-only.
+    """
+    import json
+    from app.services.dicom import DICOMProcessor
+    from app.services.llm import get_llm_client
+    from app.services.prompts import prompt_analyze_image, prompt_analyze_metadata
+
+    study = _require_study(db, study_id)
+
+    if not study.dicom_uri:
+        raise HTTPException(
+            status_code=422,
+            detail="No DICOM file uploaded for this study. Use POST /studies/{id}/dicom first.",
+        )
+
+    try:
+        proc = DICOMProcessor().load(study.dicom_uri)
+        metadata = proc.extract_metadata()
+        llm = get_llm_client()
+
+        if proc.has_pixels:
+            max_slices = getattr(settings, "dicom_max_slices_analyzed", 5)
+            slices = proc.get_representative_slices(max_slices=max_slices)
+            image_bytes_list = []
+            for idx in slices:
+                image_bytes_list.append(proc.to_png_bytes(idx, window_center=-600, window_width=1500))
+                image_bytes_list.append(proc.to_png_bytes(idx, window_center=40, window_width=400))
+            raw = llm.vision_complete(prompt_analyze_image(metadata, len(slices)), image_bytes_list)
+            log.info("api.dicom_analyzed", study_id=study_id, slices=len(slices), has_pixels=True)
+        else:
+            raw = llm.complete(prompt_analyze_metadata(metadata))
+            log.info("api.dicom_analyzed", study_id=study_id, has_pixels=False)
+
+        try:
+            result = json.loads(raw)
+            impression = result.get("visual_impression", "")
+            findings = result.get("visual_findings", [])
+            image_findings = impression + ("\n" + "\n".join(findings) if findings else "")
+        except json.JSONDecodeError:
+            image_findings = raw
+
+        study.image_findings = image_findings
+        db.commit()
+
+        return AnalyzeResult(
+            study_id=study_id,
+            image_findings=image_findings,
+            has_pixels=proc.has_pixels,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error("api.dicom_analyze_failed", study_id=study_id, error=str(exc))
+        raise HTTPException(
+            status_code=500,
+            detail=f"DICOM analysis failed: {str(exc)}",
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

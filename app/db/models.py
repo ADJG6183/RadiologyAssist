@@ -41,6 +41,9 @@ class Study(Base):
     # DICOM image path — None if no image was uploaded for this study.
     # The pipeline's ANALYZE_IMAGE stage skips cleanly when this is None.
     dicom_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # Pre-analyzed DICOM findings — populated by POST /studies/{id}/analyze.
+    # The pipeline reads this rather than re-running analysis on every /run call.
+    image_findings: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     patient: Mapped["Patient"] = relationship(back_populates="studies")
@@ -98,6 +101,10 @@ class ReportDraft(Base):
     # nullable=True so existing draft rows are unaffected by this schema change.
     quality_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     quality_breakdown: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON string
+
+    # DICOM image analysis findings — populated by stage_analyze_image.
+    # None when no DICOM was uploaded or pixel decode failed.
+    image_findings: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     study: Mapped["Study"] = relationship(back_populates="report_drafts")
 

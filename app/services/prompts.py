@@ -27,9 +27,20 @@ def prompt_extract(transcript: str, image_findings: Optional[str] = None) -> str
     stage.  When present, it is included as additional visual context so the
     extraction can reconcile dictation with what was actually seen on the images.
     """
+    # When no dictation was provided the radiologist is relying entirely on
+    # the DICOM image analysis (image_findings).  Tell Claude explicitly so
+    # it knows to derive all fields from the image section rather than the
+    # empty dictation block.
+    if transcript.strip():
+        dictation_block = f"Dictation:\n{transcript}"
+        image_label = "IMAGE ANALYSIS FINDINGS (from DICOM review — use to supplement, not replace, dictation):"
+    else:
+        dictation_block = "Dictation:\n(No dictation provided — derive all fields from the image analysis findings below)"
+        image_label = "IMAGE ANALYSIS FINDINGS (primary source — no dictation was recorded):"
+
     image_section = ""
     if image_findings:
-        image_section = f"\n\nIMAGE ANALYSIS FINDINGS (from DICOM review — use to supplement, not replace, dictation):\n{image_findings}\n"
+        image_section = f"\n\n{image_label}\n{image_findings}\n"
 
     return f"""You are a clinical data extraction system for a radiology department.
 
@@ -50,13 +61,12 @@ Required JSON schema:
 }}
 
 Rules:
-- If a field is not mentioned in the dictation, use an empty string "" or empty list [].
-- Do not invent findings that are not in the dictation.
+- If a field is not mentioned in the source material, use an empty string "" or empty list [].
+- Do not invent findings not present in the source material.
 - Separate each distinct finding into its own list item.
 - critical_findings must only contain findings that are clinically urgent.
 {image_section}
-Dictation:
-{transcript}"""
+{dictation_block}"""
 
 
 def prompt_analyze_image(metadata: dict, num_slices: int) -> str:
@@ -99,6 +109,41 @@ Rules:
 - If image quality prevents confident assessment, state that in image_quality."""
 
 
+def prompt_analyze_metadata(metadata: dict) -> str:
+    """
+    Fallback for ANALYZE_IMAGE when pixel data is unavailable.
+
+    When a DICOM file loads but has no decodable pixel data (SR, RT, PR files,
+    or corrupt CT exports) we still have the header tags — modality, body part,
+    scan parameters. This prompt asks Claude to infer clinical context from
+    those tags alone, using complete() instead of vision_complete().
+    """
+    import json
+
+    return f"""You are an expert radiologist reviewing DICOM file metadata from a {metadata.get('modality', 'CT')} examination.
+
+No image pixels are available, but the DICOM header tags are provided below.
+Based on the scan parameters, infer what you can about the study type and technique.
+
+DICOM metadata:
+{json.dumps(metadata, indent=2)}
+
+Return ONLY valid JSON — no explanation, no markdown, no code fences.
+
+Required JSON schema:
+{{
+  "visual_findings": [],
+  "visual_impression": string,  // inferred from metadata only — state this clearly
+  "image_quality": "Non-diagnostic",
+  "windows_reviewed": []
+}}
+
+Rules:
+- You have no images — do not invent findings. visual_findings must be empty.
+- visual_impression should summarise the scan type/technique from metadata only.
+- Always prefix visual_impression with "Metadata only (no pixel data available): "."""
+
+
 def prompt_draft(
     transcript: str,
     structured_fields: dict,
@@ -125,6 +170,8 @@ def prompt_draft(
             else:
                 prior_section += f"Prior {i}: {r['text']}\n"
 
+    dictation_section = transcript if transcript.strip() else "(No dictation — report derived from image analysis and extracted fields)"
+
     return f"""You are an attending radiologist writing a formal diagnostic radiology report.
 
 Using the dictation and extracted fields below, write a complete radiology report.
@@ -145,7 +192,7 @@ Rules:
 - Do not include phrases like "I reviewed" or "the patient was seen".
 
 DICTATION:
-{transcript}
+{dictation_section}
 
 EXTRACTED FIELDS:
 {json.dumps(structured_fields, indent=2)}
