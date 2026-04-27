@@ -369,7 +369,11 @@ def run_pipeline(study_id: int, transcript: str, db: Session) -> PipelineContext
                 exc_info=True,  # Include full stack trace
             )
 
-            # Re-raise the error so the API knows something went wrong
+            # ValueError means a known safety/validation failure — let it
+            # propagate so the API layer can convert it to a 422 response.
+            # All other exceptions are unexpected and become a 500.
+            if isinstance(e, ValueError):
+                raise
             raise RuntimeError(f"Pipeline failed at {stage_name}: {str(e)}") from e
 
     log.info("pipeline.complete", study_id=study_id, draft_id=ctx.draft_id)
